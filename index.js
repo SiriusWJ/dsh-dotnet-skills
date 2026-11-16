@@ -17,7 +17,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { buildIndex } from "./lib/catalog.js";
 import { applyProject, clearProject, injectProject, readInjection, skillsDir } from "./lib/inject.js";
 import { analysisScope, describeProject, looksLikeDotnet } from "./lib/project.js";
@@ -404,7 +404,9 @@ async function buildPanel(ctx, updater, cfg, sessionId, options = {}) {
     settings: settingsView(cfg),
     project: {
       root: project.root,
-      name: description.name,
+      cwd: project.cwd,
+      name: basename(project.root),
+      scopeName: description.name,
       scope,
       scoped: scope !== project.root,
       skillsDir: skillsDir(project.root),

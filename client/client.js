@@ -74,6 +74,9 @@ window.__ModuleLoader__.load({
         weekUnit: '周',
         rangeHint: '范围 1–50',
         noDotnet: '这个项目里没有 .NET 痕迹',
+        sessionLabel: '会话目录',
+        scopeLabel: '分析范围',
+        skillRootLabel: '技能写入',
         unavailable: '模型暂不可用，可手动搜索选择',
         confirmHint: '写入 <项目>/.dsh/skills · 仅本项目会话可见',
       },
@@ -105,6 +108,9 @@ window.__ModuleLoader__.load({
         weekUnit: 'week',
         rangeHint: '1–50',
         noDotnet: 'No .NET traces in this project',
+        sessionLabel: 'session',
+        scopeLabel: 'analysed',
+        skillRootLabel: 'skills',
         unavailable: 'The model is unavailable — search and pick manually',
         confirmHint: 'Writes <project>/.dsh/skills · only sessions in this project see them',
       },
@@ -571,8 +577,11 @@ window.__ModuleLoader__.load({
                     h('button', { type: 'button', className: 'dsdk-close', onClick: close, title: strings.cancel, 'aria-label': strings.cancel }, h(IconClose)),
                   ),
                   panel && panel.project ? h('div', { className: 'dsdk-sub' }, `${panel.project.name} — ${panel.project.root}`) : null,
+                  panel && panel.project && panel.project.cwd && panel.project.cwd !== panel.project.root
+                    ? h('div', { className: 'dsdk-sub' }, `${strings.sessionLabel}: ${panel.project.cwd}`)
+                    : null,
                   panel && panel.project && panel.project.scoped
-                    ? h('div', { className: 'dsdk-sub' }, `分析范围：${panel.project.scope}`)
+                    ? h('div', { className: 'dsdk-sub' }, `${strings.scopeLabel}: ${panel.project.scope}`)
                     : null,
                 ),
                 view === 'settings'
