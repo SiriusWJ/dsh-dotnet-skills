@@ -18,6 +18,7 @@ import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import { pathToFileURL } from "node:url";
 import Schema from "@deepseek-ai/schemastery";
 import { buildIndex } from "./lib/catalog.js";
 import { applyProject, clearProject, injectProject, readInjection, skillsDir } from "./lib/inject.js";
@@ -51,6 +52,8 @@ const DEFAULTS = {
   startDelaySeconds: 20,
   selectMaxSkills: 10,
   selectTimeoutMs: 45_000,
+  learnMcpEnabled: false,
+  learnCliEnabled: false,
   gitCommand: "git",
 };
 
@@ -69,6 +72,8 @@ function dshHome() {
 
 /** Offered refresh intervals, in hours. */
 const INTERVAL_OPTIONS = [6, 12, 24, 72, 168];
+const SETTINGS_ROUTE = "/dsh-dotnet-skills/settings";
+const LEARN_INSTALL_ROUTE = "/dsh-dotnet-skills/learn/install";
 const MAX_SKILLS_LIMIT = 50;
 const MIN_SKILLS_LIMIT = 1;
 
@@ -92,6 +97,8 @@ export const Config = Schema.object({
   checkoutDir: Schema.string().default("").description("Where the catalog checkout lives; empty means $DSH_HOME/vendor/dotnet-skills."),
   startDelaySeconds: Schema.number().min(0).step(1).default(20).description("Delay before the startup refresh."),
   selectTimeoutMs: Schema.number().min(5000).step(1000).default(45_000).description("Timeout of one panel analysis (ms)."),
+  learnMcpEnabled: Schema.boolean().default(false).description("Mount the public Microsoft Learn MCP server (learn.microsoft.com/api/mcp) as microsoft-learn tools."),
+  learnCliEnabled: Schema.boolean().default(false).description("Install the Microsoft Learn CLI (@microsoft/learn-cli) globally, the mslearn fallback."),
 });
 
 function intervalLabel(hours) {
@@ -110,6 +117,9 @@ function settingsView(cfg) {
     selectMaxSkills: cfg.selectMaxSkills,
     minSkills: MIN_SKILLS_LIMIT,
     maxSkills: MAX_SKILLS_LIMIT,
+    learnMcpEnabled: cfg.learnMcpEnabled === true,
+    learnCliEnabled: cfg.learnCliEnabled === true,
+    learn,
   };
 }
 
@@ -120,10 +130,96 @@ function resolveConfig(config) {
     checkoutDir: String(merged.checkoutDir ?? "").trim() || join(dshHome(), "vendor", "dotnet-skills"),
     intervalHours: INTERVAL_OPTIONS.includes(Number(merged.intervalHours)) ? Number(merged.intervalHours) : DEFAULTS.intervalHours,
     selectMaxSkills: Math.min(MAX_SKILLS_LIMIT, Math.max(MIN_SKILLS_LIMIT, Math.round(Number(merged.selectMaxSkills)) || DEFAULTS.selectMaxSkills)),
+    learnMcpEnabled: merged.learnMcpEnabled !== false,
+    learnCliEnabled: merged.learnCliEnabled === true,
     startDelaySeconds: Math.max(0, Number(merged.startDelaySeconds) || 0),
     runOnStart: merged.runOnStart !== false,
     statusPath: join(dshHome(), "dotnet-skills.status.json"),
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * Microsoft Learn: MCP server (streamable HTTP) + the mslearn CLI
+ * ------------------------------------------------------------------ */
+
+const LEARN_MCP_URL = "https://learn.microsoft.com/api/mcp";
+const LEARN_CLI_PACKAGE = "@microsoft/learn-cli";
+/** Live state of both integrations, reported to the settings page. */
+const learn = {
+  mcp: { enabled: false, active: false, url: LEARN_MCP_URL, error: null },
+  cli: { enabled: false, installed: null, busy: false, package: LEARN_CLI_PACKAGE, log: [] },
+};
+
+/** Locate the installed MCP client package: beside this build, or inside the running app's resources. */
+function mcpClientEntry() {
+  const roots = [];
+  const fromEnv = String(process.env.DSH_INSTALL_DIR ?? "").trim();
+  if (fromEnv !== "") roots.push(dirname(fromEnv));
+  const resources = String(process.resourcesPath ?? "").trim() || join(dirname(process.execPath), "resources");
+  for (const carrier of ["app.asar", "app"]) roots.push(join(resources, carrier, "dsh", "node_modules", "@deepseek-ai"));
+  const candidates = [];
+  for (const root of roots) {
+    for (const entry of ["lib/index.js", "index.js"]) candidates.push(join(root, "dsh-mcp-client", entry));
+  }
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+}
+
+/** Mount `@deepseek-ai/dsh-mcp-client` as a child plugin while the toggle is on. */
+async function startLearnMcp(ctx, cfg, warn) {
+  learn.mcp.enabled = cfg.learnMcpEnabled === true;
+  if (!learn.mcp.enabled) {
+    learn.mcp.active = false;
+    learn.mcp.error = null;
+    return;
+  }
+  try {
+    const entryPath = mcpClientEntry();
+    if (entryPath === null) throw new Error(`the MCP client package is not installed beside this DSH build (execPath=${process.execPath}; resources=${process.resourcesPath}; env=${process.env.DSH_INSTALL_DIR ?? "-"})`);
+    const loaded = await import(pathToFileURL(entryPath).href);
+    const plugin = loaded.default ?? loaded;
+    ctx.plugin(plugin, {
+      serverName: "microsoft-learn-cli",
+      transport: "streamable-http",
+      url: LEARN_MCP_URL,
+      failOnStartupError: false,
+    });
+    learn.mcp.active = true;
+    learn.mcp.error = null;
+  } catch (error) {
+    learn.mcp.active = false;
+    learn.mcp.error = String(error?.message ?? error);
+    warn(`could not start the Microsoft Learn MCP server: ${learn.mcp.error}`);
+  }
+}
+
+/** Persist this row's configuration through the config editor, which restarts the plugin. */
+async function saveConfig(ctx, patch) {
+  const editor = typeof ctx.get === "function" ? ctx.get("configEditor") : undefined;
+  const entry = ctx.fiber?.entry;
+  if (editor === undefined || typeof editor.edit !== "function") throw new Error("configuration cannot be saved in this profile");
+  if (entry === undefined) throw new Error("the plugin entry is not addressable");
+  await editor.edit(entry, (current) => ({ ...(current ?? {}), ...patch }));
+}
+
+/** Install the CLI globally when the toggle is on; the panel reports the outcome. */
+function ensureLearnCli(cfg, warn, force) {
+  learn.cli.enabled = cfg.learnCliEnabled === true;
+  if (!learn.cli.enabled && force !== true) return;
+  if (learn.cli.busy) return;
+  if (force !== true && learn.cli.installed === true) return;
+  learn.cli.busy = true;
+  execFile(
+    process.platform === "win32" ? "npm.cmd" : "npm",
+    ["install", "-g", LEARN_CLI_PACKAGE],
+    { timeout: 240_000, windowsHide: true },
+    (error, stdout, stderr) => {
+      learn.cli.busy = false;
+      learn.cli.installed = error === null;
+      const output = `${stdout ?? ""}${stderr ?? ""}`.trim().split(/\r?\n/u).filter((line) => line !== "");
+      learn.cli.log = output.slice(-6);
+      if (error !== null) warn(`could not install ${LEARN_CLI_PACKAGE}: ${error.message}`);
+    },
+  );
 }
 
 /* ------------------------------------------------------------------ *
@@ -610,6 +706,52 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
             }
           },
         });
+        add({
+          kind: "exact",
+          path: SETTINGS_ROUTE,
+          handler: async (request, response) => {
+            if ((request.method ?? "GET") === "GET") {
+              sendJson(response, 200, { ok: true, settings: settingsView(cfg) });
+              return;
+            }
+            if (!mutationAllowed(request)) {
+              sendJson(response, 403, { ok: false, error: "this change has to come from the DSH window" });
+              return;
+            }
+            const body = await readJsonBody(request);
+            const patch = {};
+            const interval = Number(body?.intervalHours);
+            if (INTERVAL_OPTIONS.includes(interval)) patch.intervalHours = interval;
+            const max = Math.round(Number(body?.selectMaxSkills));
+            if (Number.isFinite(max)) patch.selectMaxSkills = Math.min(MAX_SKILLS_LIMIT, Math.max(MIN_SKILLS_LIMIT, max));
+            if (typeof body?.learnMcpEnabled === "boolean") patch.learnMcpEnabled = body.learnMcpEnabled;
+            if (typeof body?.learnCliEnabled === "boolean") patch.learnCliEnabled = body.learnCliEnabled;
+            if (Object.keys(patch).length === 0) {
+              sendJson(response, 400, { ok: false, error: "nothing to save" });
+              return;
+            }
+            try {
+              await saveConfig(ctx, patch);
+              Object.assign(cfg, patch);
+              sendJson(response, 200, { ok: true, settings: settingsView(cfg) });
+            } catch (error) {
+              sendJson(response, 409, { ok: false, error: String(error?.message ?? error) });
+            }
+          },
+        });
+        add({
+          kind: "exact",
+          path: LEARN_INSTALL_ROUTE,
+          handler: async (request, response) => {
+            if (!mutationAllowed(request) || (request.method ?? "GET") === "GET") {
+              sendJson(response, 403, { ok: false, error: "this change has to come from the DSH window" });
+              return;
+            }
+            await readJsonBody(request);
+            ensureLearnCli(cfg, warn, true);
+            sendJson(response, 200, { ok: true, settings: settingsView(cfg) });
+          },
+        });
         return () => {
           for (const dispose of disposers) {
             try {
@@ -844,6 +986,16 @@ export function apply(ctx, config = {}) {
 
   const scheduler = createScheduler(cfg, updater);
   registerRoutes(ctx, updater, cfg, warn, scheduler);
+  try {
+    void startLearnMcp(ctx, cfg, warn);
+  } catch (error) {
+    warn(`could not start the Microsoft Learn MCP server: ${String(error)}`);
+  }
+  try {
+    ensureLearnCli(cfg, warn, false);
+  } catch (error) {
+    warn(`could not install the Microsoft Learn CLI: ${String(error)}`);
+  }
   registerTool(ctx, updater, cfg, warn);
   registerPromptSection(ctx, warn);
 

@@ -1,9 +1,10 @@
 /**
  * dsh-dotnet-skills — Client half.
  *
- * Two registrations, one tiny store:
+ * Three registrations, one tiny store:
  *   conversation.input.left → the composer button (`dotnet技能`, with a count badge)
  *   shell.overlay           → the dialog layer (frame-wide, above every column)
+ *   plugins.bundle.config   → this bundle's settings, on Plugins → Installed
  *
  * The dialog lives in shell.overlay rather than inside the composer: a fixed
  * child of the docked composer is positioned against its transformed ancestor
@@ -19,6 +20,8 @@ window.__ModuleLoader__.load({
     const STATE_ENDPOINT = '/dsh-dotnet-skills/state'
     const APPLY_ENDPOINT = '/dsh-dotnet-skills/apply'
     const CLEAR_ENDPOINT = '/dsh-dotnet-skills/clear'
+    const SETTINGS_ENDPOINT = '/dsh-dotnet-skills/settings'
+    const LEARN_INSTALL_ENDPOINT = '/dsh-dotnet-skills/learn/install'
     const BRAND = '#512bd4'
 
     /** Panel state shared by the composer button and the overlay dialog. */
@@ -64,20 +67,32 @@ window.__ModuleLoader__.load({
         existing: '已选技能',
         refreshInterval: '刷新频率',
         maxPicks: '最大自动推荐',
-        hoursUnit: '小时',
-        dayUnit: '天',
-        weekUnit: '周',
-        noDotnet: '这个项目里没有 .NET 痕迹',
-        sessionLabel: '会话目录',
         save: '保存',
         savedNotice: '已保存',
         rejectedNotice: '未保存：值被拒绝',
         cfgUnavailable: '当前配置不可编辑',
         cfgHint: '保存后会重启该插件并立即生效',
+        hoursUnit: '小时',
+        dayUnit: '天',
+        weekUnit: '周',
+        noDotnet: '这个项目里没有 .NET 痕迹',
+        unavailable: '模型暂不可用，可手动搜索选择',
+        sessionLabel: '会话目录',
         scopeLabel: '分析范围',
         skillRootLabel: '技能写入',
-        unavailable: '模型暂不可用，可手动搜索选择',
         confirmHint: '写入 <项目>/.dsh/skills · 仅本项目会话可见',
+        learnTitle: 'Microsoft Learn 集成',
+        learnMcp: 'MCP 服务器（learn.microsoft.com/api/mcp）',
+        learnCli: 'CLI（npm 全局安装 @microsoft/learn-cli）',
+        learnInstall: '立即安装 CLI',
+        learnInstalling: '正在安装…',
+        learnInstalled: '已安装',
+        learnNotInstalled: '未安装',
+        learnActive: '已连接',
+        learnInactive: '未连接',
+        learnOff: '已关闭',
+        enabled: '启用',
+        disabled: '停用',
       },
       en: {
         button: 'dotnet skills',
@@ -98,20 +113,32 @@ window.__ModuleLoader__.load({
         existing: 'current selection',
         refreshInterval: 'Refresh',
         maxPicks: 'Max suggestions',
-        hoursUnit: 'h',
-        dayUnit: 'day',
-        weekUnit: 'week',
-        noDotnet: 'No .NET traces in this project',
-        sessionLabel: 'session',
         save: 'Save',
         savedNotice: 'saved',
         rejectedNotice: 'not saved: value rejected',
         cfgUnavailable: 'this configuration is not editable here',
         cfgHint: 'saving restarts the plugin and applies at once',
+        hoursUnit: 'h',
+        dayUnit: 'day',
+        weekUnit: 'week',
+        noDotnet: 'No .NET traces in this project',
+        unavailable: 'The model is unavailable — search and pick manually',
+        sessionLabel: 'session',
         scopeLabel: 'analysed',
         skillRootLabel: 'skills',
-        unavailable: 'The model is unavailable — search and pick manually',
         confirmHint: 'Writes <project>/.dsh/skills · only sessions in this project see them',
+        learnTitle: 'Microsoft Learn',
+        learnMcp: 'MCP server (learn.microsoft.com/api/mcp)',
+        learnCli: 'CLI (npm global @microsoft/learn-cli)',
+        learnInstall: 'Install the CLI now',
+        learnInstalling: 'installing…',
+        learnInstalled: 'installed',
+        learnNotInstalled: 'not installed',
+        learnActive: 'connected',
+        learnInactive: 'not connected',
+        learnOff: 'off',
+        enabled: 'on',
+        disabled: 'off',
       },
     }
 
@@ -122,8 +149,7 @@ window.__ModuleLoader__.load({
     }
 
     function t() {
-      const lang = typeof document === 'undefined' ? 'zh' : document.documentElement.lang || 'zh'
-      return lang.toLowerCase().startsWith('zh') ? STRINGS.zh : STRINGS.en
+      return uiLang() === 'zh' ? STRINGS.zh : STRINGS.en
     }
 
     /** Small status chip: which model picked the skills, and how long it took. */
@@ -218,28 +244,38 @@ window.__ModuleLoader__.load({
       'border-top-color:' + BRAND + ';animation:dsdk-rotate .8s linear infinite}',
       '.dsdk-error{margin:14px 20px 18px;padding:12px 14px;border-radius:10px;font-size:12.5px;line-height:1.5;',
       'background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3);color:var(--dsw-alias-state-error-primary,#ff6b6b)}',
-      '.dsdk-form{padding:14px 20px 4px;display:flex;flex-direction:column;gap:6px}',
-      '.dsdk-field{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:9px 0;',
-      'border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06))}',
-      '.dsdk-field:last-child{border-bottom:0}',
-      '.dsdk-label{font-size:13px}',
-      '.dsdk-control{display:flex;align-items:center;gap:8px;min-width:0}',
-      '.dsdk-select,.dsdk-number{height:30px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.16));',
-      'background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.08));color:inherit;font:inherit;font-size:12.5px;padding:0 8px}',
-      '.dsdk-select:focus,.dsdk-number:focus{outline:none;border-color:rgba(129,140,248,.6);box-shadow:0 0 0 3px rgba(81,43,212,.18)}',
-      '.dsdk-number{width:76px;text-align:right}',
-      '.dsdk-sub-hint{font-size:11.5px;color:var(--dsw-alias-label-secondary,#8b929b)}',
-      '.dsdk-cfg{display:flex;flex-direction:column;gap:10px;max-width:460px}',
-      '.dsdk-cfg-row{display:flex;align-items:center;justify-content:space-between;gap:12px}',
-      '.dsdk-cfg-label{font-size:13px}',
+
+      /* settings card (Plugins → Installed) */
+      '.dsdk-cfg{display:flex;flex-direction:column;gap:12px;max-width:560px}',
+      '.dsdk-cfg-group{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:12px;',
+      'border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.05))}',
+      '.dsdk-cfg-head{font-size:12px;font-weight:650;letter-spacing:.3px;text-transform:uppercase;',
+      'color:var(--dsw-alias-label-secondary,#98a0aa)}',
+      '.dsdk-cfg-row{display:flex;align-items:center;justify-content:space-between;gap:14px;font-size:13px}',
+      '.dsdk-cfg-label{display:flex;flex-direction:column;gap:2px;min-width:0}',
+      '.dsdk-cfg-help{font-size:11px;color:var(--dsw-alias-label-secondary,#8b929b);overflow-wrap:anywhere}',
       '.dsdk-cfg-select,.dsdk-cfg-input{height:30px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.16));',
       'background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.12));color:inherit;font:inherit;font-size:12.5px;padding:0 8px}',
-      '.dsdk-cfg-input{width:88px;text-align:right}',
+      '.dsdk-cfg-input{width:84px;text-align:right}',
+      '.dsdk-cfg-select:focus,.dsdk-cfg-input:focus{outline:none;border-color:rgba(129,140,248,.6);box-shadow:0 0 0 3px rgba(81,43,212,.18)}',
       '.dsdk-cfg-note{font-size:11.5px;color:var(--dsw-alias-label-secondary,#8b929b);margin:0}',
-      '.dsdk-cfg-actions{display:flex;align-items:center;gap:10px}',
-      '.dsdk-cfg-save{height:30px;padding:0 14px;border-radius:8px;border:0;background:' + BRAND + ';color:#fff;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}',
+      '.dsdk-cfg-ok{color:var(--dsw-alias-state-success-primary,#22c55e)}',
+      '.dsdk-cfg-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}',
+      '.dsdk-cfg-save{height:30px;padding:0 14px;border-radius:8px;border:0;background:' + BRAND + ';color:#fff;font:inherit;',
+      'font-size:12.5px;font-weight:600;cursor:pointer}',
       '.dsdk-cfg-save:disabled{opacity:.45;cursor:default}',
-      '.dsdk-notice{font-size:12px;color:var(--dsw-alias-state-success-primary,#22c55e);padding:0 20px 6px}',
+      '.dsdk-cfg-ghost{height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.16));',
+      'background:transparent;color:inherit;font:inherit;font-size:12.5px;cursor:pointer}',
+      '.dsdk-cfg-ghost:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.18))}',
+      '.dsdk-cfg-ghost:disabled{opacity:.45;cursor:default}',
+      '.dsdk-switch{position:relative;display:inline-flex;align-items:center;width:38px;height:22px;border-radius:999px;',
+      'border:0;background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.28));cursor:pointer;transition:background-color .15s ease;flex:none}',
+      '.dsdk-switch[data-on="true"]{background:' + BRAND + '}',
+      '.dsdk-switch span{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:999px;background:#fff;',
+      'transition:transform .15s ease}',
+      '.dsdk-switch[data-on="true"] span{transform:translateX(16px)}',
+      '.dsdk-switch:disabled{opacity:.45;cursor:default}',
+
       '@keyframes dsdk-rotate{to{transform:rotate(360deg)}}',
       '@keyframes dsdk-fade{from{opacity:0}to{opacity:1}}',
       '@keyframes dsdk-pop{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}',
@@ -664,106 +700,219 @@ window.__ModuleLoader__.load({
     }
 
     /* ---------------------------------------------------------------- *
-     * Plugins → Installed → this row → Configure
+     * Plugins → Installed → this bundle's settings
      * ---------------------------------------------------------------- */
 
+    const BUNDLE_KEY = 'dsh-dotnet-skills'
     const ROW_KEY = 'dsh-dotnet-skills#dotnet-skills'
     const FALLBACK_INTERVALS = [6, 12, 24, 72, 168]
 
-    function RowConfig(props) {
+    function Switch(props) {
+      return h(
+        'button',
+        {
+          type: 'button',
+          className: 'dsdk-switch',
+          'data-on': props.checked ? 'true' : 'false',
+          role: 'switch',
+          'aria-checked': props.checked ? 'true' : 'false',
+          'aria-label': props.label,
+          disabled: props.disabled,
+          onClick: () => props.onChange(!props.checked),
+        },
+        h('span', null),
+      )
+    }
+
+    /**
+     * The whole settings surface: the panel's two knobs and the Microsoft Learn
+     * integrations. It talks to the plugin's own routes, so it does not depend on
+     * the host handing this page a writable form.
+     */
+    function SettingsCard(props) {
       const strings = t()
-      const form = props && props.form
-      const state = form && form.state ? form.state : {}
-      const value = state.value && typeof state.value === 'object' ? state.value : {}
-      const revision = state.revision
-      const ready = state.status === 'ready' && state.writable !== false
+      const [settings, setSettings] = React.useState(null)
       const [draft, setDraft] = React.useState(null)
-      const [baseline, setBaseline] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const [message, setMessage] = React.useState('')
+      const [installing, setInstalling] = React.useState(false)
 
       const read = (source) => ({
         intervalHours: Number(source.intervalHours) || FALLBACK_INTERVALS[0],
         selectMaxSkills: Number(source.selectMaxSkills) || 10,
+        learnMcpEnabled: source.learnMcpEnabled !== false,
+        learnCliEnabled: source.learnCliEnabled === true,
       })
 
+      const loadSettings = React.useCallback(async () => {
+        try {
+          const payload = await request(SETTINGS_ENDPOINT)
+          if (payload === null || payload.ok !== true) return
+          setSettings(payload.settings)
+          setDraft((current) => current ?? read(payload.settings))
+        } catch {
+          /* the note below reports the failure when saving */
+        }
+      }, [])
+
       React.useEffect(() => {
-        if (draft !== null) return
-        if (!ready) return
-        setDraft(read(value))
-        setBaseline(read(value))
-      }, [ready, revision, draft, value])
+        void loadSettings()
+      }, [loadSettings])
+
+      // While the CLI installs, keep reading the status the host records.
+      React.useEffect(() => {
+        if (!installing && !(settings && settings.learn && settings.learn.cli && settings.learn.cli.busy)) return undefined
+        const timer = window.setInterval(() => void loadSettings(), 2000)
+        return () => window.clearInterval(timer)
+      }, [installing, settings, loadSettings])
 
       if (props && props.view === 'summary') {
         return h(
           'span',
           null,
-          `${strings.refreshInterval} ${intervalText(value.intervalHours || FALLBACK_INTERVALS[0], strings)} · ${strings.maxPicks} ${
-            value.selectMaxSkills || 10
+          `${strings.refreshInterval} ${intervalText(settings ? settings.intervalHours : FALLBACK_INTERVALS[0], strings)} · ${strings.maxPicks} ${
+            settings ? settings.selectMaxSkills : 10
           }`,
         )
       }
-      if (!ready || draft === null || baseline === null) {
-        return h('p', { className: 'dsdk-cfg-note' }, state.status === 'loading' ? strings.analysing : strings.cfgUnavailable)
+      if (draft === null || settings === null) {
+        return h('p', { className: 'dsdk-cfg-note' }, strings.analysing)
       }
 
-      const dirty = draft.intervalHours !== baseline.intervalHours || draft.selectMaxSkills !== baseline.selectMaxSkills
       const save = async () => {
-        if (busy || !dirty || revision === undefined || form === undefined) return
+        if (busy) return
         setBusy(true)
         setMessage('')
-        const operations = []
-        if (draft.intervalHours !== baseline.intervalHours) operations.push({ op: 'set', path: ['intervalHours'], value: draft.intervalHours })
-        if (draft.selectMaxSkills !== baseline.selectMaxSkills) operations.push({ op: 'set', path: ['selectMaxSkills'], value: draft.selectMaxSkills })
         try {
-          const accepted = await form.mutate(operations, revision)
-          setMessage(accepted ? strings.savedNotice : strings.rejectedNotice)
-          if (accepted) setBaseline(draft)
-        } catch (error) {
-          setMessage(error && error.message ? error.message : String(error))
+          const payload = await request(SETTINGS_ENDPOINT, { ...draft, lang: uiLang() })
+          if (payload === null || payload.ok !== true) throw new Error(payload?.error ?? 'save failed')
+          setSettings(payload.settings)
+          setDraft(read(payload.settings))
+          setMessage(strings.savedNotice)
+        } catch (failure) {
+          setMessage(failure && failure.message ? failure.message : String(failure))
         } finally {
           setBusy(false)
         }
       }
 
+      const installCli = async () => {
+        if (installing) return
+        setInstalling(true)
+        setMessage('')
+        try {
+          await request(LEARN_INSTALL_ENDPOINT, { lang: uiLang() })
+          await loadSettings()
+        } catch (failure) {
+          setMessage(failure && failure.message ? failure.message : String(failure))
+        } finally {
+          setInstalling(false)
+        }
+      }
+
+      const learn = settings.learn || {}
+      const mcp = learn.mcp || {}
+      const cli = learn.cli || {}
+      const cliBusy = installing || cli.busy === true
+
       return h(
         'div',
         { className: 'dsdk-cfg' },
         h(
-          'label',
-          { className: 'dsdk-cfg-row' },
-          h('span', { className: 'dsdk-cfg-label' }, strings.refreshInterval),
+          'div',
+          { className: 'dsdk-cfg-group' },
+          h('div', { className: 'dsdk-cfg-head' }, strings.title),
           h(
-            'select',
-            {
-              className: 'dsdk-cfg-select',
-              value: String(draft.intervalHours),
+            'div',
+            { className: 'dsdk-cfg-row' },
+            h('span', { className: 'dsdk-cfg-label' }, strings.refreshInterval),
+            h(
+              'select',
+              {
+                className: 'dsdk-cfg-select',
+                value: String(draft.intervalHours),
+                disabled: busy,
+                onChange: (event) => setDraft({ ...draft, intervalHours: Number(event.target.value) }),
+              },
+              FALLBACK_INTERVALS.map((hours) => h('option', { key: hours, value: String(hours) }, intervalText(hours, strings))),
+            ),
+          ),
+          h(
+            'div',
+            { className: 'dsdk-cfg-row' },
+            h('span', { className: 'dsdk-cfg-label' }, strings.maxPicks),
+            h('input', {
+              className: 'dsdk-cfg-input',
+              type: 'number',
+              min: 1,
+              max: 50,
+              value: String(draft.selectMaxSkills),
               disabled: busy,
-              onChange: (event) => setDraft({ ...draft, intervalHours: Number(event.target.value) }),
-            },
-            FALLBACK_INTERVALS.map((hours) => h('option', { key: hours, value: String(hours) }, intervalText(hours, strings))),
+              onChange: (event) => setDraft({ ...draft, selectMaxSkills: Number(event.target.value) }),
+            }),
           ),
         ),
         h(
-          'label',
-          { className: 'dsdk-cfg-row' },
-          h('span', { className: 'dsdk-cfg-label' }, strings.maxPicks),
-          h('input', {
-            className: 'dsdk-cfg-input',
-            type: 'number',
-            min: 1,
-            max: 50,
-            value: String(draft.selectMaxSkills),
-            disabled: busy,
-            onChange: (event) => setDraft({ ...draft, selectMaxSkills: Number(event.target.value) }),
-          }),
+          'div',
+          { className: 'dsdk-cfg-group' },
+          h('div', { className: 'dsdk-cfg-head' }, strings.learnTitle),
+          h(
+            'div',
+            { className: 'dsdk-cfg-row' },
+            h(
+              'span',
+              { className: 'dsdk-cfg-label' },
+              h('span', null, strings.learnMcp),
+              h('span', { className: 'dsdk-cfg-help' }, mcp.enabled === false ? strings.learnOff : mcp.active === true ? strings.learnActive : mcp.error ? mcp.error : strings.learnInactive),
+            ),
+            h(Switch, {
+              checked: draft.learnMcpEnabled,
+              disabled: busy,
+              label: strings.learnMcp,
+              onChange: (next) => setDraft({ ...draft, learnMcpEnabled: next }),
+            }),
+          ),
+          h(
+            'div',
+            { className: 'dsdk-cfg-row' },
+            h(
+              'span',
+              { className: 'dsdk-cfg-label' },
+              h('span', null, strings.learnCli),
+              h(
+                'span',
+                { className: 'dsdk-cfg-help' },
+                cliBusy
+                  ? strings.learnInstalling
+                  : cli.installed === true
+                    ? strings.learnInstalled
+                    : cli.installed === false
+                      ? strings.learnNotInstalled
+                      : draft.learnCliEnabled
+                        ? strings.learnInstalling
+                        : strings.learnOff,
+              ),
+            ),
+            h(Switch, {
+              checked: draft.learnCliEnabled,
+              disabled: busy,
+              label: strings.learnCli,
+              onChange: (next) => setDraft({ ...draft, learnCliEnabled: next }),
+            }),
+          ),
+          h(
+            'div',
+            { className: 'dsdk-cfg-actions' },
+            h('button', { type: 'button', className: 'dsdk-cfg-ghost', disabled: cliBusy, onClick: installCli }, cliBusy ? strings.learnInstalling : strings.learnInstall),
+            cli.log && cli.log.length > 0 ? h('span', { className: 'dsdk-cfg-help' }, cli.log[cli.log.length - 1]) : null,
+          ),
         ),
-        h('p', { className: 'dsdk-cfg-note' }, strings.cfgHint),
         h(
           'div',
           { className: 'dsdk-cfg-actions' },
-          h('button', { type: 'button', className: 'dsdk-cfg-save', disabled: busy || !dirty, onClick: save }, strings.save),
-          message !== '' ? h('span', { className: 'dsdk-cfg-note', role: 'status' }, message) : null,
+          h('button', { type: 'button', className: 'dsdk-cfg-save', disabled: busy, onClick: save }, strings.save),
+          h('span', { className: 'dsdk-cfg-note' }, strings.cfgHint),
+          message !== '' ? h('span', { className: 'dsdk-cfg-note dsdk-cfg-ok', role: 'status' }, message) : null,
         ),
       )
     }
@@ -793,7 +942,18 @@ window.__ModuleLoader__.load({
             Dialog,
           ),
         )
-        // Plugins → Installed → dsh-dotnet-skills → this row's Configure page.
+        // Plugins → Installed → dsh-dotnet-skills: settings live on the bundle page.
+        ctx.slots.inject('plugins.bundle.config', () =>
+          ctx.slots.register(
+            {
+              name: 'plugins.bundle.config',
+              key: BUNDLE_KEY,
+              label: () => t().settings,
+            },
+            (props) => h(SettingsCard, props),
+          ),
+        )
+        // The same form is reachable from the row's own page when the page offers one.
         ctx.slots.inject('plugins.row.config', () =>
           ctx.slots.register(
             {
@@ -801,7 +961,7 @@ window.__ModuleLoader__.load({
               key: ROW_KEY,
               label: () => t().settings,
             },
-            (props) => h(RowConfig, props),
+            (props) => h(SettingsCard, props),
           ),
         )
       },
