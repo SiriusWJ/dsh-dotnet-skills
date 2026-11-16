@@ -92,8 +92,12 @@ window.__ModuleLoader__.load({
         learnInactive: '未连接',
         learnOff: '已关闭',
         learnError: '连接失败',
-        enabled: '启用',
-        disabled: '停用',
+        cached: '缓存',
+        settingsHint: '插件 → 已安装',
+        noSession: '没有拿到会话标识，请重新打开面板',
+        noPanelData: '面板数据为空',
+        saveFailed: '保存失败',
+        learnToggleFailed: '无法切换 Microsoft Learn 服务',
       },
       en: {
         button: 'dotnet skills',
@@ -139,19 +143,40 @@ window.__ModuleLoader__.load({
         learnInactive: 'not connected',
         learnOff: 'off',
         learnError: 'failed',
-        enabled: 'on',
-        disabled: 'off',
+        cached: 'cached',
+        settingsHint: 'Plugins → Installed',
+        noSession: 'no live session id was passed to the panel',
+        noPanelData: 'no panel data',
+        saveFailed: 'save failed',
+        learnToggleFailed: 'could not change the Microsoft Learn server',
       },
     }
 
-    /** Language code for host requests: the reasons must match the UI language. */
+    /** The UI language: the document's lang attribute, then the browser's, else English. */
     function uiLang() {
-      const lang = typeof document === 'undefined' ? 'zh' : document.documentElement.lang || 'zh'
-      return lang.toLowerCase().startsWith('zh') ? 'zh' : 'en'
+      const fromDocument = typeof document === 'undefined' ? '' : document.documentElement.lang || ''
+      const fromBrowser = typeof navigator === 'undefined' ? '' : navigator.language || ''
+      return (fromDocument || fromBrowser || 'en').toLowerCase().startsWith('zh') ? 'zh' : 'en'
     }
 
     function t() {
-      return uiLang() === 'zh' ? STRINGS.zh : STRINGS.en
+      return STRINGS[uiLang()]
+    }
+
+    /** Re-render when DSH switches language, without reloading the page. */
+    function useStrings() {
+      const [strings, setStrings] = React.useState(t)
+      React.useEffect(() => {
+        const sync = () => setStrings(t())
+        const observer = typeof MutationObserver === 'undefined' ? null : new MutationObserver(sync)
+        if (observer !== null) observer.observe(document.documentElement, { attributes: true, attributeFilter: ['lang'] })
+        window.addEventListener('languagechange', sync)
+        return () => {
+          if (observer !== null) observer.disconnect()
+          window.removeEventListener('languagechange', sync)
+        }
+      }, [])
+      return strings
     }
 
     /** Small status chip: which model picked the skills, and how long it took. */
@@ -160,7 +185,7 @@ window.__ModuleLoader__.load({
       if (!analysis) return ''
       if (analysis.source === 'model') {
         const seconds = analysis.durationMs ? `${(analysis.durationMs / 1000).toFixed(1)}s` : ''
-        const cached = analysis.cached ? 'cache' : ''
+        const cached = analysis.cached ? strings.cached : ''
         return ['AI', cached, seconds].filter((part) => part !== '').join(' · ')
       }
       if (analysis.source === 'existing') return strings.existing
@@ -392,7 +417,7 @@ window.__ModuleLoader__.load({
 
     function ComposerButton(props) {
       const sessionId = props && props.sessionId ? props.sessionId : null
-      const strings = t()
+      const strings = useStrings()
       const [count, setCount] = React.useState(0)
       const [revision, bump] = React.useState(0)
 
@@ -440,7 +465,7 @@ window.__ModuleLoader__.load({
      * ---------------------------------------------------------------- */
 
     function Dialog() {
-      const strings = t()
+      const strings = useStrings()
       const [revision, bump] = React.useState(0)
       const [phase, setPhase] = React.useState('idle') // idle | loading | ready | error
       const [panel, setPanel] = React.useState(null)
@@ -468,7 +493,7 @@ window.__ModuleLoader__.load({
           setPhase('loading')
           setError('')
           if (sessionId === null || sessionId === undefined) {
-            setError('no live session id was passed to the panel')
+            setError(strings.noSession)
             setPhase('error')
             return
           }
@@ -476,7 +501,7 @@ window.__ModuleLoader__.load({
             const payload = await request(
               `${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}&lang=${uiLang()}${refresh ? '&refresh=1' : ''}`,
             )
-            if (payload === null || payload.ok !== true) throw new Error(payload?.error ?? 'no panel data')
+            if (payload === null || payload.ok !== true) throw new Error(payload?.error ?? strings.noPanelData)
             applyPanel(payload)
             if (!refresh) setQuery('')
             setPhase('ready')
@@ -556,7 +581,7 @@ window.__ModuleLoader__.load({
           if (result && result.ok === true) {
             setPanel((current) => (current === null ? current : { ...current, learnMcp: result.learnMcp, learn: result.learn }))
           } else {
-            throw new Error(result?.error ?? 'could not change the Microsoft Learn server')
+            throw new Error(result?.error ?? strings.learnToggleFailed)
           }
         } catch (failure) {
           setError(failure && failure.message ? failure.message : String(failure))
@@ -730,7 +755,7 @@ window.__ModuleLoader__.load({
                         panel && panel.settings
                           ? h(
                               'span',
-                              { className: 'dsdk-hint', title: 'Plugins → Installed' },
+                              { className: 'dsdk-hint', title: strings.settingsHint },
                               `${strings.refreshInterval} ${intervalText(panel.settings.intervalHours, strings)} · ${strings.maxPicks} ${panel.settings.selectMaxSkills}`,
                             )
                           : null,
@@ -807,7 +832,7 @@ window.__ModuleLoader__.load({
      * the host handing this page a writable form.
      */
     function SettingsCard(props) {
-      const strings = t()
+      const strings = useStrings()
       const [settings, setSettings] = React.useState(null)
       const [draft, setDraft] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
@@ -848,7 +873,7 @@ window.__ModuleLoader__.load({
         setMessage('')
         try {
           const payload = await request(SETTINGS_ENDPOINT, { ...draft, lang: uiLang() })
-          if (payload === null || payload.ok !== true) throw new Error(payload?.error ?? 'save failed')
+          if (payload === null || payload.ok !== true) throw new Error(payload?.error ?? strings.saveFailed)
           setSettings(payload.settings)
           setDraft(read(payload.settings))
           setMessage(strings.savedNotice)
