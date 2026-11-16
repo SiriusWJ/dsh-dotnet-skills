@@ -569,7 +569,14 @@ window.__ModuleLoader__.load({
                         h('button', { type: 'button', className: 'dsdk-act', onClick: close, disabled: busy }, strings.cancel),
                         h(
                           'button',
-                          { type: 'button', className: 'dsdk-act', 'data-primary': 'true', onClick: submit, disabled: busy },
+                          {
+                            type: 'button',
+                            className: 'dsdk-act',
+                            'data-primary': 'true',
+                            onClick: submit,
+                            disabled: busy,
+                            title: strings.confirmHint,
+                          },
                           `${strings.inject} ${selection.length}`,
                         ),
                       ),
