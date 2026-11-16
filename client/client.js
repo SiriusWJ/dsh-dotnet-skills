@@ -93,6 +93,7 @@ window.__ModuleLoader__.load({
         learnActive: '已连接',
         learnInactive: '未连接',
         learnOff: '已关闭',
+        learnError: '连接失败',
         enabled: '启用',
         disabled: '停用',
       },
@@ -140,6 +141,7 @@ window.__ModuleLoader__.load({
         learnActive: 'connected',
         learnInactive: 'not connected',
         learnOff: 'off',
+        learnError: 'failed',
         enabled: 'on',
         disabled: 'off',
       },
@@ -192,10 +194,10 @@ window.__ModuleLoader__.load({
       'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));box-shadow:0 24px 80px rgba(0,0,0,.6),0 2px 10px rgba(0,0,0,.4);',
       'overflow:hidden;animation:dsdk-pop .16s cubic-bezier(.2,.8,.3,1)}',
       '.dsdk-head{padding:18px 20px 12px;display:flex;flex-direction:column;gap:7px}',
-      '.dsdk-headrow{display:flex;align-items:flex-start;gap:10px}',
+      '.dsdk-headrow{display:flex;align-items:center;gap:10px}',
       '.dsdk-title{font-size:15.5px;font-weight:650;letter-spacing:.2px;display:flex;align-items:center;gap:9px}',
       '.dsdk-sub{font-size:12px;color:var(--dsw-alias-label-secondary,#98a0aa);word-break:break-all}',
-      '.dsdk-close{margin-left:auto;display:grid;place-items:center;width:26px;height:26px;border:0;border-radius:8px;',
+      '.dsdk-close{display:grid;place-items:center;width:26px;height:26px;border:0;border-radius:8px;',
       'background:transparent;color:var(--dsw-alias-label-secondary,#98a0aa);cursor:pointer}',
       '.dsdk-close:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.18));color:var(--dsw-alias-label-primary,#e9ebee)}',
       '.dsdk-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 20px 4px}',
@@ -248,11 +250,13 @@ window.__ModuleLoader__.load({
       '.dsdk-error{margin:14px 20px 18px;padding:12px 14px;border-radius:10px;font-size:12.5px;line-height:1.5;',
       'background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3);color:var(--dsw-alias-state-error-primary,#ff6b6b)}',
 
-      /* Microsoft Learn bar inside the dialog (per working directory) */
-      '.dsdk-learn{display:flex;align-items:center;gap:10px;margin:0 20px 8px;padding:8px 12px;border-radius:10px;',
-      'border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.05))}',
-      '.dsdk-learn-label{font-size:12.5px;font-weight:600;flex:none}',
-      '.dsdk-learn-state{font-size:11.5px;color:var(--dsw-alias-label-secondary,#8b929b);min-width:0;',
+      /* Microsoft Learn control in the panel header (per working directory) */
+      '.dsdk-headright{margin-left:auto;display:flex;align-items:center;gap:10px}',
+      '.dsdk-learn-pill{display:flex;align-items:center;gap:9px;padding:3px 5px 3px 11px;border-radius:999px;',
+      'border:1px solid rgba(129,140,248,.32);background:rgba(81,43,212,.14);transition:border-color .15s ease,background-color .15s ease}',
+      '.dsdk-learn-pill[data-on="true"]{border-color:rgba(129,140,248,.6);background:rgba(81,43,212,.26)}',
+      '.dsdk-learn-label{font-size:11.5px;font-weight:650;letter-spacing:.2px;white-space:nowrap;flex:none}',
+      '.dsdk-learn-state{font-size:11px;color:var(--dsw-alias-label-secondary,#98a0aa);min-width:0;max-width:210px;',
       'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 
       /* settings card (Plugins → Installed) */
@@ -282,12 +286,14 @@ window.__ModuleLoader__.load({
       'background:transparent;color:inherit;font:inherit;font-size:12.5px;cursor:pointer}',
       '.dsdk-cfg-ghost:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.18))}',
       '.dsdk-cfg-ghost:disabled{opacity:.45;cursor:default}',
-      '.dsdk-switch{position:relative;display:inline-flex;align-items:center;width:38px;height:22px;border-radius:999px;',
-      'border:0;background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.28));cursor:pointer;transition:background-color .15s ease;flex:none}',
-      '.dsdk-switch[data-on="true"]{background:' + BRAND + '}',
-      '.dsdk-switch span{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:999px;background:#fff;',
-      'transition:transform .15s ease}',
-      '.dsdk-switch[data-on="true"] span{transform:translateX(16px)}',
+      '.dsdk-switch{position:relative;display:inline-flex;align-items:center;width:46px;height:26px;border-radius:999px;',
+      'border:1px solid rgba(255,255,255,.3);box-sizing:border-box;padding:0;cursor:pointer;flex:none;',
+      'background:rgba(255,255,255,.16);box-shadow:inset 0 1px 2px rgba(0,0,0,.35);transition:background-color .15s ease,border-color .15s ease}',
+      '.dsdk-switch:hover:not(:disabled){border-color:rgba(255,255,255,.5)}',
+      '.dsdk-switch[data-on="true"]{background:' + BRAND + ';border-color:' + BRAND + '}',
+      '.dsdk-switch span{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:999px;background:#fff;',
+      'box-shadow:0 1px 3px rgba(0,0,0,.45);transition:transform .16s ease}',
+      '.dsdk-switch[data-on="true"] span{transform:translateX(20px)}',
       '.dsdk-switch:disabled{opacity:.45;cursor:default}',
 
       '@keyframes dsdk-rotate{to{transform:rotate(360deg)}}',
@@ -322,6 +328,13 @@ window.__ModuleLoader__.load({
       if (panel.learnMcp !== true) return `${strings.learnOff} · ${strings.learnCliShort}: ${cliText}`
       if (learn.error) return String(learn.error)
       return `${learn.active === true ? strings.learnActive : strings.learnInactive} · ${strings.learnCliShort}: ${cliText}`
+    }
+
+    /** Short label for the header pill; the full detail lives in its tooltip. */
+    function learnShort(panel, strings) {
+      if (panel.learnMcp !== true) return strings.learnOff
+      if (panel.learn && panel.learn.error) return strings.learnError
+      return panel.learn && panel.learn.active === true ? strings.learnActive : strings.learnInactive
     }
 
     function IconDotnet(props) {
@@ -620,7 +633,25 @@ window.__ModuleLoader__.load({
                       { className: 'dsdk-chip dsdk-chip-label dsdk-analysis', title: panel && panel.analysis ? panel.analysis.note || '' : '' },
                       analysisLabel(panel, strings),
                     ),
-                    h('button', { type: 'button', className: 'dsdk-close', onClick: close, title: strings.cancel, 'aria-label': strings.cancel }, h(IconClose)),
+                    h(
+                      'div',
+                      { className: 'dsdk-headright' },
+                      panel && phase === 'ready'
+                        ? h(
+                            'div',
+                            { className: 'dsdk-learn-pill', 'data-on': panel.learnMcp === true ? 'true' : 'false' },
+                            h('span', { className: 'dsdk-learn-label' }, 'Microsoft Learn'),
+                            h('span', { className: 'dsdk-learn-state', title: learnStateText(panel, strings) }, learnShort(panel, strings)),
+                            h(Switch, {
+                              checked: panel.learnMcp === true,
+                              disabled: learnBusy,
+                              label: strings.learnTitle,
+                              onChange: toggleLearn,
+                            }),
+                          )
+                        : null,
+                      h('button', { type: 'button', className: 'dsdk-close', onClick: close, title: strings.cancel, 'aria-label': strings.cancel }, h(IconClose)),
+                    ),
                   ),
                   panel && panel.project ? h('div', { className: 'dsdk-sub' }, `${panel.project.name} — ${panel.project.root}`) : null,
                   panel && panel.project && panel.project.cwd && panel.project.cwd !== panel.project.root
@@ -638,21 +669,6 @@ window.__ModuleLoader__.load({
                       panel.detected.signals.length === 0
                         ? h('span', { className: 'dsdk-chip' }, strings.nothing)
                         : panel.detected.signals.map((signal) => h('span', { className: 'dsdk-chip', key: signal.id }, signal.label)),
-                    )
-                  : null,
-                phase === 'ready'
-                  ? h(
-                      'div',
-                      { className: 'dsdk-learn' },
-                      h('span', { className: 'dsdk-learn-label' }, strings.learnTitle),
-                      h('span', { className: 'dsdk-learn-state' }, learnStateText(panel, strings)),
-                      h('span', { className: 'dsdk-grow' }),
-                      h(Switch, {
-                        checked: panel.learnMcp === true,
-                        disabled: learnBusy,
-                        label: strings.learnTitle,
-                        onChange: toggleLearn,
-                      }),
                     )
                   : null,
                 phase === 'loading'
