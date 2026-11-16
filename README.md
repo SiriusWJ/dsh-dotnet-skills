@@ -69,17 +69,22 @@ The panel itself (routes `/dsh-dotnet-skills/apply`, `/clear`) always acts as th
 
 ## Configuration
 
-The `dotnet-skills` row of this bundle's `cordis.patch.yml`; override it from the profile's own `cordis.patch.yml` (a patch replaces the whole `config`):
+Edit it in **Plugins → Installed → dsh-dotnet-skills**; the plugin declares a `Config` schema, so the manager renders a form with the bounds below and writes the profile's patch for the `dotnet-skills` row.
 
 | Key | Default | Meaning |
 |---|---|---|
+| `intervalHours` | `6` | catalog refresh interval — one of `6`, `12`, `24`, `72`, `168` hours (6 h / 12 h / 1 day / 3 days / 1 week) |
+| `selectMaxSkills` | `10` | how many skills the model may pick per project, `1`–`50` |
 | `repoUrl` | `https://github.com/managedcode/dotnet-skills.git` | catalog source |
 | `branch` | `main` | branch to track |
-| `intervalHours` | `6` | checkout refresh interval |
 | `runOnStart` | `true` | refresh once after start |
 | `startDelaySeconds` | `20` | delay before that first refresh |
 | `checkoutDir` | `$DSH_HOME/vendor/dotnet-skills` | shallow clone location |
-| `gitCommand` | `git` | git executable when it is not on PATH |
+| `selectTimeoutMs` | `45000` | timeout of one panel analysis |
+
+`gitCommand` is the one key the form does not expose; set it in the profile patch when git is not on PATH.
+
+The panel footer shows the values in force (`刷新频率 6 小时 · 最大自动推荐 10`), so a session can tell which configuration it is running under.
 
 ## HTTP surface (same origin, JSON only)
 

@@ -19,7 +19,6 @@ window.__ModuleLoader__.load({
     const STATE_ENDPOINT = '/dsh-dotnet-skills/state'
     const APPLY_ENDPOINT = '/dsh-dotnet-skills/apply'
     const CLEAR_ENDPOINT = '/dsh-dotnet-skills/clear'
-    const SETTINGS_ENDPOINT = '/dsh-dotnet-skills/settings'
     const BRAND = '#512bd4'
 
     /** Panel state shared by the composer button and the overlay dialog. */
@@ -63,16 +62,11 @@ window.__ModuleLoader__.load({
         error: '出错了：',
         suggestedTag: 'AI 推荐',
         existing: '已选技能',
-        settings: '设置',
         refreshInterval: '刷新频率',
         maxPicks: '最大自动推荐',
-        save: '保存',
-        back: '返回',
-        savedNotice: '已保存',
         hoursUnit: '小时',
         dayUnit: '天',
         weekUnit: '周',
-        rangeHint: '范围 1–50',
         noDotnet: '这个项目里没有 .NET 痕迹',
         sessionLabel: '会话目录',
         scopeLabel: '分析范围',
@@ -97,16 +91,11 @@ window.__ModuleLoader__.load({
         error: 'Failed: ',
         suggestedTag: 'AI pick',
         existing: 'current selection',
-        settings: 'Settings',
         refreshInterval: 'Refresh',
         maxPicks: 'Max suggestions',
-        save: 'Save',
-        back: 'Back',
-        savedNotice: 'saved',
         hoursUnit: 'h',
         dayUnit: 'day',
         weekUnit: 'week',
-        rangeHint: '1–50',
         noDotnet: 'No .NET traces in this project',
         sessionLabel: 'session',
         scopeLabel: 'analysed',
@@ -274,20 +263,6 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function IconGear() {
-      return h(
-        'svg',
-        { viewBox: '0 0 16 16', width: 15, height: 15, fill: 'none', 'aria-hidden': true },
-        h('circle', { cx: 8, cy: 8, r: 2.3, stroke: 'currentColor', strokeWidth: 1.4 }),
-        h('path', {
-          d: 'M8 1.9v1.6M8 12.5v1.6M1.9 8h1.6M12.5 8h1.6M3.7 3.7l1.1 1.1M11.2 11.2l1.1 1.1M12.3 3.7l-1.1 1.1M4.8 11.2l-1.1 1.1',
-          stroke: 'currentColor',
-          strokeWidth: 1.3,
-          strokeLinecap: 'round',
-        }),
-      )
-    }
-
     /** Localized interval label: the host returns hours, the panel speaks the UI language. */
     function intervalText(hours, strings) {
       const value = Number(hours)
@@ -380,10 +355,6 @@ window.__ModuleLoader__.load({
       const [query, setQuery] = React.useState('')
       const [selection, setSelection] = React.useState([])
       const [busy, setBusy] = React.useState(false)
-      const [view, setView] = React.useState('list')
-      const [draft, setDraft] = React.useState({ intervalHours: 6, selectMaxSkills: 10 })
-      const [saving, setSaving] = React.useState(false)
-      const [notice, setNotice] = React.useState('')
       const searchRef = React.useRef(null)
 
       React.useEffect(() => store.subscribe(() => bump((value) => value + 1)), [])
@@ -394,34 +365,7 @@ window.__ModuleLoader__.load({
       const applyPanel = React.useCallback((payload) => {
         setPanel(payload)
         setSelection(payload.injected.length > 0 ? payload.injected : payload.suggested)
-        if (payload.settings) {
-          setDraft({ intervalHours: payload.settings.intervalHours, selectMaxSkills: payload.settings.selectMaxSkills })
-        }
       }, [])
-
-      const saveSettings = async () => {
-        if (saving) return
-        setSaving(true)
-        setNotice('')
-        try {
-          const result = await request(SETTINGS_ENDPOINT, {
-            intervalHours: draft.intervalHours,
-            selectMaxSkills: draft.selectMaxSkills,
-            lang: uiLang(),
-          })
-          if (result === null || result.ok !== true) throw new Error(result?.error ?? 'save failed')
-          setPanel((current) => (current === null ? current : { ...current, settings: result.settings }))
-          setDraft({ intervalHours: result.settings.intervalHours, selectMaxSkills: result.settings.selectMaxSkills })
-          setNotice(strings.savedNotice)
-          setView('list')
-        } catch (failure) {
-          setError(failure && failure.message ? failure.message : String(failure))
-          setPhase('error')
-          setView('list')
-        } finally {
-          setSaving(false)
-        }
-      }
 
       /** One load; `refresh` bypasses both the cache and the "already chosen" shortcut. */
       const load = React.useCallback(
@@ -429,8 +373,6 @@ window.__ModuleLoader__.load({
           const refresh = options !== undefined && options.refresh === true
           setPhase('loading')
           setError('')
-          setView('list')
-          setNotice('')
           if (sessionId === null || sessionId === undefined) {
             setError('no live session id was passed to the panel')
             setPhase('error')
@@ -573,7 +515,6 @@ window.__ModuleLoader__.load({
                       { className: 'dsdk-chip dsdk-chip-label dsdk-analysis', title: panel && panel.analysis ? panel.analysis.note || '' : '' },
                       analysisLabel(panel, strings),
                     ),
-                    h('button', { type: 'button', className: 'dsdk-close', onClick: () => setView(view === 'settings' ? 'list' : 'settings'), title: strings.settings, 'aria-label': strings.settings }, h(IconGear)),
                     h('button', { type: 'button', className: 'dsdk-close', onClick: close, title: strings.cancel, 'aria-label': strings.cancel }, h(IconClose)),
                   ),
                   panel && panel.project ? h('div', { className: 'dsdk-sub' }, `${panel.project.name} — ${panel.project.root}`) : null,
@@ -584,61 +525,7 @@ window.__ModuleLoader__.load({
                     ? h('div', { className: 'dsdk-sub' }, `${strings.scopeLabel}: ${panel.project.scope}`)
                     : null,
                 ),
-                view === 'settings'
-                  ? h(
-                      'div',
-                      { className: 'dsdk-form' },
-                      h(
-                        'div',
-                        { className: 'dsdk-field' },
-                        h('span', { className: 'dsdk-label' }, strings.refreshInterval),
-                        h(
-                          'span',
-                          { className: 'dsdk-control' },
-                          h(
-                            'select',
-                            {
-                              className: 'dsdk-select',
-                              value: String(draft.intervalHours),
-                              onChange: (event) => setDraft((current) => ({ ...current, intervalHours: Number(event.target.value) })),
-                            },
-                            (panel && panel.settings ? panel.settings.intervalOptions : [{ hours: 6 }, { hours: 12 }, { hours: 24 }, { hours: 72 }, { hours: 168 }]).map(
-                              (option) => h('option', { key: option.hours, value: String(option.hours) }, intervalText(option.hours, strings)),
-                            ),
-                          ),
-                        ),
-                      ),
-                      h(
-                        'div',
-                        { className: 'dsdk-field' },
-                        h('span', { className: 'dsdk-label' }, strings.maxPicks),
-                        h(
-                          'span',
-                          { className: 'dsdk-control' },
-                          h('span', { className: 'dsdk-sub-hint' }, strings.rangeHint),
-                          h('input', {
-                            className: 'dsdk-number',
-                            type: 'number',
-                            min: panel && panel.settings ? panel.settings.minSkills : 1,
-                            max: panel && panel.settings ? panel.settings.maxSkills : 50,
-                            value: String(draft.selectMaxSkills),
-                            onChange: (event) => setDraft((current) => ({ ...current, selectMaxSkills: Number(event.target.value) })),
-                          }),
-                        ),
-                      ),
-                      notice !== '' ? h('div', { className: 'dsdk-sub-hint', style: { color: '#22c55e' } }, notice) : null,
-                    )
-                  : null,
-                view === 'settings'
-                  ? h(
-                      'div',
-                      { className: 'dsdk-foot' },
-                      h('span', { className: 'dsdk-grow' }),
-                      h('button', { type: 'button', className: 'dsdk-act', onClick: () => setView('list'), disabled: saving }, strings.back),
-                      h('button', { type: 'button', className: 'dsdk-act', 'data-primary': 'true', onClick: saveSettings, disabled: saving }, strings.save),
-                    )
-                  : null,
-                view === 'list' && panel && phase === 'ready'
+                panel && phase === 'ready'
                   ? h(
                       'div',
                       { className: 'dsdk-chips' },
@@ -648,11 +535,11 @@ window.__ModuleLoader__.load({
                         : panel.detected.signals.map((signal) => h('span', { className: 'dsdk-chip', key: signal.id }, signal.label)),
                     )
                   : null,
-                view === 'list' && phase === 'loading'
+                phase === 'loading'
                   ? h('div', { className: 'dsdk-loading' }, h('div', { className: 'dsdk-spin' }), h('div', { className: 'dsdk-hint' }, strings.analysing))
                   : null,
-                view === 'list' && phase === 'error' ? h('div', { className: 'dsdk-error' }, `${strings.error}${error}`) : null,
-                view === 'list' && phase === 'ready'
+                phase === 'error' ? h('div', { className: 'dsdk-error' }, `${strings.error}${error}`) : null,
+                phase === 'ready'
                   ? h(
                       'div',
                       { style: { display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 } },
@@ -707,6 +594,13 @@ window.__ModuleLoader__.load({
                           `${strings.selected} ${selection.length} · ≈${chosenTokens} tok`,
                         ),
                         h('span', { className: 'dsdk-grow' }),
+                        panel && panel.settings
+                          ? h(
+                              'span',
+                              { className: 'dsdk-hint', title: 'Plugins → Installed' },
+                              `${strings.refreshInterval} ${intervalText(panel.settings.intervalHours, strings)} · ${strings.maxPicks} ${panel.settings.selectMaxSkills}`,
+                            )
+                          : null,
                         h('button', { type: 'button', className: 'dsdk-act', onClick: () => void load({ refresh: true }), disabled: busy }, strings.refresh),
                         h(
                           'button',
@@ -735,7 +629,7 @@ window.__ModuleLoader__.load({
                       ),
                     )
                   : null,
-                view === 'list' && phase === 'error'
+                phase === 'error'
                   ? h(
                       'div',
                       { className: 'dsdk-foot' },

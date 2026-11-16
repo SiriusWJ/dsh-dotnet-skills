@@ -15,9 +15,10 @@
  *   - serve the composer panel (routes) and the model's `dotnet_skills` tool.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
+import Schema from "@deepseek-ai/schemastery";
 import { buildIndex } from "./lib/catalog.js";
 import { applyProject, clearProject, injectProject, readInjection, skillsDir } from "./lib/inject.js";
 import { analysisScope, describeProject, looksLikeDotnet } from "./lib/project.js";
@@ -63,47 +64,35 @@ function dshHome() {
 }
 
 /* ------------------------------------------------------------------ *
- * user settings (the panel's gear): interval + how many picks
+ * configuration (edited from Plugins → Installed)
  * ------------------------------------------------------------------ */
 
-const SETTINGS_ROUTE = "/dsh-dotnet-skills/settings";
 /** Offered refresh intervals, in hours. */
 const INTERVAL_OPTIONS = [6, 12, 24, 72, 168];
 const MAX_SKILLS_LIMIT = 50;
 const MIN_SKILLS_LIMIT = 1;
 
-function settingsPath() {
-  return join(dshHome(), "dotnet-skills.settings.json");
-}
-
-/** Accept only the offered values; everything else falls back to the defaults. */
-function sanitizeSettings(raw) {
-  const settings = {};
-  if (raw === null || typeof raw !== "object") return settings;
-  const interval = Number(raw.intervalHours);
-  if (INTERVAL_OPTIONS.includes(interval)) settings.intervalHours = interval;
-  const max = Math.round(Number(raw.selectMaxSkills));
-  if (Number.isFinite(max)) settings.selectMaxSkills = Math.min(MAX_SKILLS_LIMIT, Math.max(MIN_SKILLS_LIMIT, max));
-  return settings;
-}
-
-function readSettings() {
-  try {
-    return sanitizeSettings(JSON.parse(readFileSync(settingsPath(), "utf8")));
-  } catch {
-    return {};
-  }
-}
-
-function writeSettings(settings) {
-  try {
-    mkdirSync(dirname(settingsPath()), { recursive: true });
-    writeFileSync(settingsPath(), `${JSON.stringify(settings, null, 2)}\n`, "utf8");
-    return true;
-  } catch {
-    return false;
-  }
-}
+/**
+ * The row config the Plugin Manager renders as a form. Both knobs are bounded
+ * here, so a hand-edited patch file cannot put the plugin in a silly state.
+ */
+export const Config = Schema.object({
+  intervalHours: Schema.union(INTERVAL_OPTIONS.map((hours) => Schema.const(hours)))
+    .default(6)
+    .description("How often the skill catalog is refreshed: 6 h / 12 h / 1 day / 3 days / 1 week."),
+  selectMaxSkills: Schema.number()
+    .min(MIN_SKILLS_LIMIT)
+    .max(MAX_SKILLS_LIMIT)
+    .step(1)
+    .default(10)
+    .description("How many skills the model may pick for a project (1–50)."),
+  repoUrl: Schema.string().default(DEFAULTS.repoUrl).description("Catalog repository, managedcode/dotnet-skills by default."),
+  branch: Schema.string().default(DEFAULTS.branch).description("Branch of the catalog repository to track."),
+  runOnStart: Schema.boolean().default(true).description("Refresh the catalog shortly after DSH starts."),
+  checkoutDir: Schema.string().default("").description("Where the catalog checkout lives; empty means $DSH_HOME/vendor/dotnet-skills."),
+  startDelaySeconds: Schema.number().min(0).step(1).default(20).description("Delay before the startup refresh."),
+  selectTimeoutMs: Schema.number().min(5000).step(1000).default(45_000).description("Timeout of one panel analysis (ms)."),
+});
 
 function intervalLabel(hours) {
   if (hours >= 168) return "1 week";
@@ -112,7 +101,7 @@ function intervalLabel(hours) {
   return `${hours} h`;
 }
 
-/** The settings shape both the panel and the settings route return. */
+/** Read-only view of the active configuration, for the panel footer. */
 function settingsView(cfg) {
   return {
     intervalHours: cfg.intervalHours,
@@ -125,7 +114,7 @@ function settingsView(cfg) {
 }
 
 function resolveConfig(config) {
-  const merged = { ...DEFAULTS, ...(config ?? {}), ...readSettings() };
+  const merged = { ...DEFAULTS, ...(config ?? {}) };
   return {
     ...merged,
     checkoutDir: String(merged.checkoutDir ?? "").trim() || join(dshHome(), "vendor", "dotnet-skills"),
@@ -619,41 +608,6 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
             } catch (error) {
               sendJson(response, 500, { ok: false, error: String(error?.message ?? error) });
             }
-          },
-        });
-        add({
-          kind: "exact",
-          path: SETTINGS_ROUTE,
-          handler: async (request, response) => {
-            if ((request.method ?? "GET") === "GET") {
-              sendJson(response, 200, { ok: true, settings: settingsView(cfg) });
-              return;
-            }
-            if (!mutationAllowed(request)) {
-              sendJson(response, 403, { ok: false, error: "this change has to come from the DSH window" });
-              return;
-            }
-            const body = await readJsonBody(request);
-            const next = sanitizeSettings(body);
-            if (Object.keys(next).length === 0) {
-              sendJson(response, 400, {
-                ok: false,
-                error: `nothing to save: intervalHours must be one of ${INTERVAL_OPTIONS.join("/")}, selectMaxSkills ${MIN_SKILLS_LIMIT}-${MAX_SKILLS_LIMIT}`,
-              });
-              return;
-            }
-            const saved = { ...readSettings(), ...next };
-            if (!writeSettings(saved)) {
-              sendJson(response, 500, { ok: false, error: `could not write ${settingsPath()}` });
-              return;
-            }
-            Object.assign(cfg, resolveConfig({ ...cfg, ...saved }));
-            try {
-              scheduler.start();
-            } catch (error) {
-              warn(`could not reschedule after a settings change: ${String(error)}`);
-            }
-            sendJson(response, 200, { ok: true, settings: settingsView(cfg) });
           },
         });
         return () => {
