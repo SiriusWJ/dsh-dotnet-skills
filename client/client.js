@@ -275,7 +275,7 @@ window.__ModuleLoader__.load({
 
       /* Microsoft Learn control in the panel header (per working directory) */
       '.dsdk-headright{margin-left:auto;display:flex;align-items:center;gap:10px;flex:0 0 auto}',
-      '.dsdk-learn-pill{display:flex;align-items:center;gap:8px;padding:3px 4px 3px 10px;border-radius:999px;flex:0 0 auto;max-width:100%}',
+      '.dsdk-learn-pill{display:flex;align-items:center;gap:8px;padding:3px 4px 3px 10px;border-radius:999px;flex:0 0 auto;max-width:100%;',
       'border:1px solid rgba(129,140,248,.32);background:rgba(81,43,212,.14);transition:border-color .15s ease,background-color .15s ease}',
       '.dsdk-learn-pill[data-on="true"]{border-color:rgba(129,140,248,.6);background:rgba(81,43,212,.26)}',
       '.dsdk-learn-label{font-size:11.5px;font-weight:650;letter-spacing:.2px;white-space:nowrap;flex:none}',
@@ -307,7 +307,6 @@ window.__ModuleLoader__.load({
       '.dsdk-cfg-save{height:30px;padding:0 14px;border-radius:8px;border:0;background:' + BRAND + ';color:#fff;font:inherit;',
       'font-size:12.5px;font-weight:600;cursor:pointer}',
       '.dsdk-cfg-save:disabled{opacity:.45;cursor:default}',
-      'background:transparent;color:inherit;font:inherit;font-size:12.5px;cursor:pointer}',
       '.dsdk-switch{position:relative;display:inline-flex;align-items:center;width:42px;height:24px;border-radius:999px;flex:0 0 auto;',
       'border:1px solid rgba(255,255,255,.3);box-sizing:border-box;padding:0;cursor:pointer;flex:none;',
       'background:rgba(255,255,255,.16);box-shadow:inset 0 1px 2px rgba(0,0,0,.35);transition:background-color .15s ease,border-color .15s ease}',
