@@ -83,8 +83,9 @@ window.__ModuleLoader__.load({
         confirmHint: '写入 <项目>/.dsh/skills · 仅本项目会话可见',
         learnTitle: 'Microsoft Learn 集成',
         learnMcp: 'MCP 服务器（learn.microsoft.com/api/mcp）',
-        learnCli: 'CLI（npm 全局安装 @microsoft/learn-cli）',
-        learnInstall: '立即安装 CLI',
+        learnCliShort: 'CLI',
+        learnDetecting: '检测中…',
+        learnRetry: '重试安装 CLI',
         learnInstalling: '正在安装…',
         learnInstalled: '已安装',
         learnNotInstalled: '未安装',
@@ -129,8 +130,9 @@ window.__ModuleLoader__.load({
         confirmHint: 'Writes <project>/.dsh/skills · only sessions in this project see them',
         learnTitle: 'Microsoft Learn',
         learnMcp: 'MCP server (learn.microsoft.com/api/mcp)',
-        learnCli: 'CLI (npm global @microsoft/learn-cli)',
-        learnInstall: 'Install the CLI now',
+        learnCliShort: 'CLI',
+        learnDetecting: 'checking…',
+        learnRetry: 'Retry the CLI install',
         learnInstalling: 'installing…',
         learnInstalled: 'installed',
         learnNotInstalled: 'not installed',
@@ -246,17 +248,21 @@ window.__ModuleLoader__.load({
       'background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3);color:var(--dsw-alias-state-error-primary,#ff6b6b)}',
 
       /* settings card (Plugins → Installed) */
-      '.dsdk-cfg{display:flex;flex-direction:column;gap:12px;max-width:560px}',
-      '.dsdk-cfg-group{display:flex;flex-direction:column;gap:8px;padding:12px 14px;border-radius:12px;',
+      '.dsdk-cfg{display:flex;flex-direction:column;gap:12px;width:100%;max-width:640px}',
+      '.dsdk-cfg-group{display:flex;flex-direction:column;gap:10px;padding:13px 15px;border-radius:12px;',
       'border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.05))}',
       '.dsdk-cfg-head{font-size:12px;font-weight:650;letter-spacing:.3px;text-transform:uppercase;',
       'color:var(--dsw-alias-label-secondary,#98a0aa)}',
-      '.dsdk-cfg-row{display:flex;align-items:center;justify-content:space-between;gap:14px;font-size:13px}',
+      '.dsdk-cfg-row{display:grid;grid-template-columns:minmax(0,1fr) 184px;align-items:center;',
+      'column-gap:16px;row-gap:6px;font-size:13px}',
+      '.dsdk-cfg-row> :last-child{justify-self:stretch}',
+      '.dsdk-cfg-row[data-kind="switch"]> :last-child{justify-self:end}',
       '.dsdk-cfg-label{display:flex;flex-direction:column;gap:2px;min-width:0}',
       '.dsdk-cfg-help{font-size:11px;color:var(--dsw-alias-label-secondary,#8b929b);overflow-wrap:anywhere}',
-      '.dsdk-cfg-select,.dsdk-cfg-input{height:30px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.16));',
+      '.dsdk-cfg-select,.dsdk-cfg-input{box-sizing:border-box;width:100%;height:32px;border-radius:8px;',
+      'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.16));',
       'background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.12));color:inherit;font:inherit;font-size:12.5px;padding:0 8px}',
-      '.dsdk-cfg-input{width:84px;text-align:right}',
+      '.dsdk-cfg-input{text-align:right}',
       '.dsdk-cfg-select:focus,.dsdk-cfg-input:focus{outline:none;border-color:rgba(129,140,248,.6);box-shadow:0 0 0 3px rgba(81,43,212,.18)}',
       '.dsdk-cfg-note{font-size:11.5px;color:var(--dsw-alias-label-secondary,#8b929b);margin:0}',
       '.dsdk-cfg-ok{color:var(--dsw-alias-state-success-primary,#22c55e)}',
@@ -740,8 +746,7 @@ window.__ModuleLoader__.load({
       const read = (source) => ({
         intervalHours: Number(source.intervalHours) || FALLBACK_INTERVALS[0],
         selectMaxSkills: Number(source.selectMaxSkills) || 10,
-        learnMcpEnabled: source.learnMcpEnabled !== false,
-        learnCliEnabled: source.learnCliEnabled === true,
+        learnMcpEnabled: source.learnMcpEnabled === true,
       })
 
       const loadSettings = React.useCallback(async () => {
@@ -858,12 +863,21 @@ window.__ModuleLoader__.load({
           h('div', { className: 'dsdk-cfg-head' }, strings.learnTitle),
           h(
             'div',
-            { className: 'dsdk-cfg-row' },
+            { className: 'dsdk-cfg-row', 'data-kind': 'switch' },
             h(
               'span',
               { className: 'dsdk-cfg-label' },
               h('span', null, strings.learnMcp),
-              h('span', { className: 'dsdk-cfg-help' }, mcp.enabled === false ? strings.learnOff : mcp.active === true ? strings.learnActive : mcp.error ? mcp.error : strings.learnInactive),
+              h(
+                'span',
+                { className: 'dsdk-cfg-help' },
+                `${mcp.enabled === false ? strings.learnOff : mcp.active === true ? strings.learnActive : mcp.error ? mcp.error : strings.learnInactive} · ${strings.learnCliShort}: ${
+                  cliBusy ? strings.learnInstalling : cli.installed === true ? strings.learnInstalled : cli.installed === false ? strings.learnNotInstalled : strings.learnDetecting
+                }`,
+              ),
+              mcp.enabled !== false && cli.installed === false && !cliBusy
+                ? h('button', { type: 'button', className: 'dsdk-cfg-ghost', onClick: installCli }, strings.learnRetry)
+                : null,
             ),
             h(Switch, {
               checked: draft.learnMcpEnabled,
@@ -871,40 +885,6 @@ window.__ModuleLoader__.load({
               label: strings.learnMcp,
               onChange: (next) => setDraft({ ...draft, learnMcpEnabled: next }),
             }),
-          ),
-          h(
-            'div',
-            { className: 'dsdk-cfg-row' },
-            h(
-              'span',
-              { className: 'dsdk-cfg-label' },
-              h('span', null, strings.learnCli),
-              h(
-                'span',
-                { className: 'dsdk-cfg-help' },
-                cliBusy
-                  ? strings.learnInstalling
-                  : cli.installed === true
-                    ? strings.learnInstalled
-                    : cli.installed === false
-                      ? strings.learnNotInstalled
-                      : draft.learnCliEnabled
-                        ? strings.learnInstalling
-                        : strings.learnOff,
-              ),
-            ),
-            h(Switch, {
-              checked: draft.learnCliEnabled,
-              disabled: busy,
-              label: strings.learnCli,
-              onChange: (next) => setDraft({ ...draft, learnCliEnabled: next }),
-            }),
-          ),
-          h(
-            'div',
-            { className: 'dsdk-cfg-actions' },
-            h('button', { type: 'button', className: 'dsdk-cfg-ghost', disabled: cliBusy, onClick: installCli }, cliBusy ? strings.learnInstalling : strings.learnInstall),
-            cli.log && cli.log.length > 0 ? h('span', { className: 'dsdk-cfg-help' }, cli.log[cli.log.length - 1]) : null,
           ),
         ),
         h(

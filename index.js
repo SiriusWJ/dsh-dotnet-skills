@@ -53,7 +53,6 @@ const DEFAULTS = {
   selectMaxSkills: 10,
   selectTimeoutMs: 45_000,
   learnMcpEnabled: false,
-  learnCliEnabled: false,
   gitCommand: "git",
 };
 
@@ -98,7 +97,6 @@ export const Config = Schema.object({
   startDelaySeconds: Schema.number().min(0).step(1).default(20).description("Delay before the startup refresh."),
   selectTimeoutMs: Schema.number().min(5000).step(1000).default(45_000).description("Timeout of one panel analysis (ms)."),
   learnMcpEnabled: Schema.boolean().default(false).description("Mount the public Microsoft Learn MCP server (learn.microsoft.com/api/mcp) as microsoft-learn tools."),
-  learnCliEnabled: Schema.boolean().default(false).description("Install the Microsoft Learn CLI (@microsoft/learn-cli) globally, the mslearn fallback."),
 });
 
 function intervalLabel(hours) {
@@ -118,7 +116,6 @@ function settingsView(cfg) {
     minSkills: MIN_SKILLS_LIMIT,
     maxSkills: MAX_SKILLS_LIMIT,
     learnMcpEnabled: cfg.learnMcpEnabled === true,
-    learnCliEnabled: cfg.learnCliEnabled === true,
     learn,
   };
 }
@@ -131,7 +128,6 @@ function resolveConfig(config) {
     intervalHours: INTERVAL_OPTIONS.includes(Number(merged.intervalHours)) ? Number(merged.intervalHours) : DEFAULTS.intervalHours,
     selectMaxSkills: Math.min(MAX_SKILLS_LIMIT, Math.max(MIN_SKILLS_LIMIT, Math.round(Number(merged.selectMaxSkills)) || DEFAULTS.selectMaxSkills)),
     learnMcpEnabled: merged.learnMcpEnabled !== false,
-    learnCliEnabled: merged.learnCliEnabled === true,
     startDelaySeconds: Math.max(0, Number(merged.startDelaySeconds) || 0),
     runOnStart: merged.runOnStart !== false,
     statusPath: join(dshHome(), "dotnet-skills.status.json"),
@@ -201,25 +197,38 @@ async function saveConfig(ctx, patch) {
   await editor.edit(entry, (current) => ({ ...(current ?? {}), ...patch }));
 }
 
-/** Install the CLI globally when the toggle is on; the panel reports the outcome. */
+/**
+ * Keep the `mslearn` CLI available whenever the MCP server is on: detect an
+ * existing global install first, install it only when it is missing.
+ */
 function ensureLearnCli(cfg, warn, force) {
-  learn.cli.enabled = cfg.learnCliEnabled === true;
+  learn.cli.enabled = cfg.learnMcpEnabled === true;
   if (!learn.cli.enabled && force !== true) return;
   if (learn.cli.busy) return;
   if (force !== true && learn.cli.installed === true) return;
+  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   learn.cli.busy = true;
-  execFile(
-    process.platform === "win32" ? "npm.cmd" : "npm",
-    ["install", "-g", LEARN_CLI_PACKAGE],
-    { timeout: 240_000, windowsHide: true },
-    (error, stdout, stderr) => {
+  const install = () => {
+    execFile(npm, ["install", "-g", LEARN_CLI_PACKAGE], { timeout: 240_000, windowsHide: true }, (error, stdout, stderr) => {
       learn.cli.busy = false;
       learn.cli.installed = error === null;
       const output = `${stdout ?? ""}${stderr ?? ""}`.trim().split(/\r?\n/u).filter((line) => line !== "");
       learn.cli.log = output.slice(-6);
       if (error !== null) warn(`could not install ${LEARN_CLI_PACKAGE}: ${error.message}`);
-    },
-  );
+    });
+  };
+  if (force === true) {
+    install();
+    return;
+  }
+  execFile(npm, ["ls", "-g", LEARN_CLI_PACKAGE, "--depth=0"], { timeout: 60_000, windowsHide: true }, (error) => {
+    if (error === null) {
+      learn.cli.busy = false;
+      learn.cli.installed = true;
+      return;
+    }
+    install();
+  });
 }
 
 /* ------------------------------------------------------------------ *
@@ -725,7 +734,6 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
             const max = Math.round(Number(body?.selectMaxSkills));
             if (Number.isFinite(max)) patch.selectMaxSkills = Math.min(MAX_SKILLS_LIMIT, Math.max(MIN_SKILLS_LIMIT, max));
             if (typeof body?.learnMcpEnabled === "boolean") patch.learnMcpEnabled = body.learnMcpEnabled;
-            if (typeof body?.learnCliEnabled === "boolean") patch.learnCliEnabled = body.learnCliEnabled;
             if (Object.keys(patch).length === 0) {
               sendJson(response, 400, { ok: false, error: "nothing to save" });
               return;
