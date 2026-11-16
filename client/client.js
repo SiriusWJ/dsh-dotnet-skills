@@ -69,6 +69,11 @@ window.__ModuleLoader__.load({
         weekUnit: '周',
         noDotnet: '这个项目里没有 .NET 痕迹',
         sessionLabel: '会话目录',
+        save: '保存',
+        savedNotice: '已保存',
+        rejectedNotice: '未保存：值被拒绝',
+        cfgUnavailable: '当前配置不可编辑',
+        cfgHint: '保存后会重启该插件并立即生效',
         scopeLabel: '分析范围',
         skillRootLabel: '技能写入',
         unavailable: '模型暂不可用，可手动搜索选择',
@@ -98,6 +103,11 @@ window.__ModuleLoader__.load({
         weekUnit: 'week',
         noDotnet: 'No .NET traces in this project',
         sessionLabel: 'session',
+        save: 'Save',
+        savedNotice: 'saved',
+        rejectedNotice: 'not saved: value rejected',
+        cfgUnavailable: 'this configuration is not editable here',
+        cfgHint: 'saving restarts the plugin and applies at once',
         scopeLabel: 'analysed',
         skillRootLabel: 'skills',
         unavailable: 'The model is unavailable — search and pick manually',
@@ -219,6 +229,16 @@ window.__ModuleLoader__.load({
       '.dsdk-select:focus,.dsdk-number:focus{outline:none;border-color:rgba(129,140,248,.6);box-shadow:0 0 0 3px rgba(81,43,212,.18)}',
       '.dsdk-number{width:76px;text-align:right}',
       '.dsdk-sub-hint{font-size:11.5px;color:var(--dsw-alias-label-secondary,#8b929b)}',
+      '.dsdk-cfg{display:flex;flex-direction:column;gap:10px;max-width:460px}',
+      '.dsdk-cfg-row{display:flex;align-items:center;justify-content:space-between;gap:12px}',
+      '.dsdk-cfg-label{font-size:13px}',
+      '.dsdk-cfg-select,.dsdk-cfg-input{height:30px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.16));',
+      'background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.12));color:inherit;font:inherit;font-size:12.5px;padding:0 8px}',
+      '.dsdk-cfg-input{width:88px;text-align:right}',
+      '.dsdk-cfg-note{font-size:11.5px;color:var(--dsw-alias-label-secondary,#8b929b);margin:0}',
+      '.dsdk-cfg-actions{display:flex;align-items:center;gap:10px}',
+      '.dsdk-cfg-save{height:30px;padding:0 14px;border-radius:8px;border:0;background:' + BRAND + ';color:#fff;font:inherit;font-size:12.5px;font-weight:600;cursor:pointer}',
+      '.dsdk-cfg-save:disabled{opacity:.45;cursor:default}',
       '.dsdk-notice{font-size:12px;color:var(--dsw-alias-state-success-primary,#22c55e);padding:0 20px 6px}',
       '@keyframes dsdk-rotate{to{transform:rotate(360deg)}}',
       '@keyframes dsdk-fade{from{opacity:0}to{opacity:1}}',
@@ -643,6 +663,111 @@ window.__ModuleLoader__.load({
       )
     }
 
+    /* ---------------------------------------------------------------- *
+     * Plugins → Installed → this row → Configure
+     * ---------------------------------------------------------------- */
+
+    const ROW_KEY = 'dsh-dotnet-skills#dotnet-skills'
+    const FALLBACK_INTERVALS = [6, 12, 24, 72, 168]
+
+    function RowConfig(props) {
+      const strings = t()
+      const form = props && props.form
+      const state = form && form.state ? form.state : {}
+      const value = state.value && typeof state.value === 'object' ? state.value : {}
+      const revision = state.revision
+      const ready = state.status === 'ready' && state.writable !== false
+      const [draft, setDraft] = React.useState(null)
+      const [baseline, setBaseline] = React.useState(null)
+      const [busy, setBusy] = React.useState(false)
+      const [message, setMessage] = React.useState('')
+
+      const read = (source) => ({
+        intervalHours: Number(source.intervalHours) || FALLBACK_INTERVALS[0],
+        selectMaxSkills: Number(source.selectMaxSkills) || 10,
+      })
+
+      React.useEffect(() => {
+        if (draft !== null) return
+        if (!ready) return
+        setDraft(read(value))
+        setBaseline(read(value))
+      }, [ready, revision, draft, value])
+
+      if (props && props.view === 'summary') {
+        return h(
+          'span',
+          null,
+          `${strings.refreshInterval} ${intervalText(value.intervalHours || FALLBACK_INTERVALS[0], strings)} · ${strings.maxPicks} ${
+            value.selectMaxSkills || 10
+          }`,
+        )
+      }
+      if (!ready || draft === null || baseline === null) {
+        return h('p', { className: 'dsdk-cfg-note' }, state.status === 'loading' ? strings.analysing : strings.cfgUnavailable)
+      }
+
+      const dirty = draft.intervalHours !== baseline.intervalHours || draft.selectMaxSkills !== baseline.selectMaxSkills
+      const save = async () => {
+        if (busy || !dirty || revision === undefined || form === undefined) return
+        setBusy(true)
+        setMessage('')
+        const operations = []
+        if (draft.intervalHours !== baseline.intervalHours) operations.push({ op: 'set', path: ['intervalHours'], value: draft.intervalHours })
+        if (draft.selectMaxSkills !== baseline.selectMaxSkills) operations.push({ op: 'set', path: ['selectMaxSkills'], value: draft.selectMaxSkills })
+        try {
+          const accepted = await form.mutate(operations, revision)
+          setMessage(accepted ? strings.savedNotice : strings.rejectedNotice)
+          if (accepted) setBaseline(draft)
+        } catch (error) {
+          setMessage(error && error.message ? error.message : String(error))
+        } finally {
+          setBusy(false)
+        }
+      }
+
+      return h(
+        'div',
+        { className: 'dsdk-cfg' },
+        h(
+          'label',
+          { className: 'dsdk-cfg-row' },
+          h('span', { className: 'dsdk-cfg-label' }, strings.refreshInterval),
+          h(
+            'select',
+            {
+              className: 'dsdk-cfg-select',
+              value: String(draft.intervalHours),
+              disabled: busy,
+              onChange: (event) => setDraft({ ...draft, intervalHours: Number(event.target.value) }),
+            },
+            FALLBACK_INTERVALS.map((hours) => h('option', { key: hours, value: String(hours) }, intervalText(hours, strings))),
+          ),
+        ),
+        h(
+          'label',
+          { className: 'dsdk-cfg-row' },
+          h('span', { className: 'dsdk-cfg-label' }, strings.maxPicks),
+          h('input', {
+            className: 'dsdk-cfg-input',
+            type: 'number',
+            min: 1,
+            max: 50,
+            value: String(draft.selectMaxSkills),
+            disabled: busy,
+            onChange: (event) => setDraft({ ...draft, selectMaxSkills: Number(event.target.value) }),
+          }),
+        ),
+        h('p', { className: 'dsdk-cfg-note' }, strings.cfgHint),
+        h(
+          'div',
+          { className: 'dsdk-cfg-actions' },
+          h('button', { type: 'button', className: 'dsdk-cfg-save', disabled: busy || !dirty, onClick: save }, strings.save),
+          message !== '' ? h('span', { className: 'dsdk-cfg-note', role: 'status' }, message) : null,
+        ),
+      )
+    }
+
     return {
       inject: ['slots'],
       apply(ctx) {
@@ -666,6 +791,17 @@ window.__ModuleLoader__.load({
               order: 900,
             },
             Dialog,
+          ),
+        )
+        // Plugins → Installed → dsh-dotnet-skills → this row's Configure page.
+        ctx.slots.inject('plugins.row.config', () =>
+          ctx.slots.register(
+            {
+              name: 'plugins.row.config',
+              key: ROW_KEY,
+              label: () => t().settings,
+            },
+            (props) => h(RowConfig, props),
           ),
         )
       },
