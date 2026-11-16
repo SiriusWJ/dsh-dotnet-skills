@@ -15,13 +15,13 @@
  *   - serve the composer panel (routes) and the model's `dotnet_skills` tool.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import Schema from "@deepseek-ai/schemastery";
 import { buildIndex } from "./lib/catalog.js";
-import { applyProject, clearProject, injectProject, readInjection, skillsDir } from "./lib/inject.js";
+import { applyProject, clearProject, injectProject, readInjection, readLearnMcp, setLearnMcp, skillsDir } from "./lib/inject.js";
 import { analysisScope, describeProject, looksLikeDotnet } from "./lib/project.js";
 import { cacheKey, selectSkills } from "./lib/select.js";
 import { formatMatches, searchSkills } from "./lib/search.js";
@@ -52,7 +52,6 @@ const DEFAULTS = {
   startDelaySeconds: 20,
   selectMaxSkills: 10,
   selectTimeoutMs: 45_000,
-  learnMcpEnabled: false,
   gitCommand: "git",
 };
 
@@ -73,6 +72,7 @@ function dshHome() {
 const INTERVAL_OPTIONS = [6, 12, 24, 72, 168];
 const SETTINGS_ROUTE = "/dsh-dotnet-skills/settings";
 const LEARN_INSTALL_ROUTE = "/dsh-dotnet-skills/learn/install";
+const LEARN_ROUTE = "/dsh-dotnet-skills/learn";
 const MAX_SKILLS_LIMIT = 50;
 const MIN_SKILLS_LIMIT = 1;
 
@@ -96,7 +96,6 @@ export const Config = Schema.object({
   checkoutDir: Schema.string().default("").description("Where the catalog checkout lives; empty means $DSH_HOME/vendor/dotnet-skills."),
   startDelaySeconds: Schema.number().min(0).step(1).default(20).description("Delay before the startup refresh."),
   selectTimeoutMs: Schema.number().min(5000).step(1000).default(45_000).description("Timeout of one panel analysis (ms)."),
-  learnMcpEnabled: Schema.boolean().default(false).description("Mount the public Microsoft Learn MCP server (learn.microsoft.com/api/mcp) as microsoft-learn tools."),
 });
 
 function intervalLabel(hours) {
@@ -115,7 +114,6 @@ function settingsView(cfg) {
     selectMaxSkills: cfg.selectMaxSkills,
     minSkills: MIN_SKILLS_LIMIT,
     maxSkills: MAX_SKILLS_LIMIT,
-    learnMcpEnabled: cfg.learnMcpEnabled === true,
     learn,
   };
 }
@@ -127,7 +125,6 @@ function resolveConfig(config) {
     checkoutDir: String(merged.checkoutDir ?? "").trim() || join(dshHome(), "vendor", "dotnet-skills"),
     intervalHours: INTERVAL_OPTIONS.includes(Number(merged.intervalHours)) ? Number(merged.intervalHours) : DEFAULTS.intervalHours,
     selectMaxSkills: Math.min(MAX_SKILLS_LIMIT, Math.max(MIN_SKILLS_LIMIT, Math.round(Number(merged.selectMaxSkills)) || DEFAULTS.selectMaxSkills)),
-    learnMcpEnabled: merged.learnMcpEnabled !== false,
     startDelaySeconds: Math.max(0, Number(merged.startDelaySeconds) || 0),
     runOnStart: merged.runOnStart !== false,
     statusPath: join(dshHome(), "dotnet-skills.status.json"),
@@ -139,10 +136,13 @@ function resolveConfig(config) {
  * ------------------------------------------------------------------ */
 
 const LEARN_MCP_URL = "https://learn.microsoft.com/api/mcp";
+/** Projects that turned the server on; the server is mounted while this is not empty. */
+const learnProjects = new Set();
+let mcpFiber = null;
 const LEARN_CLI_PACKAGE = "@microsoft/learn-cli";
-/** Live state of both integrations, reported to the settings page. */
+/** Live state of both integrations, reported to the panel. */
 const learn = {
-  mcp: { enabled: false, active: false, url: LEARN_MCP_URL, error: null },
+  mcp: { active: false, url: LEARN_MCP_URL, error: null, projects: [] },
   cli: { enabled: false, installed: null, busy: false, package: LEARN_CLI_PACKAGE, log: [] },
 };
 
@@ -160,20 +160,45 @@ function mcpClientEntry() {
   return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
-/** Mount `@deepseek-ai/dsh-mcp-client` as a child plugin while the toggle is on. */
-async function startLearnMcp(ctx, cfg, warn) {
-  learn.mcp.enabled = cfg.learnMcpEnabled === true;
-  if (!learn.mcp.enabled) {
-    learn.mcp.active = false;
-    learn.mcp.error = null;
-    return;
+/** Roots whose project asked for the server, kept across restarts. */
+function learnStatePath() {
+  return join(dshHome(), "dotnet-skills.learn.json");
+}
+
+function knownLearnProjects() {
+  try {
+    const list = JSON.parse(readFileSync(learnStatePath(), "utf8"));
+    if (!Array.isArray(list)) return [];
+    return list.filter((root) => typeof root === "string" && readLearnMcp(root));
+  } catch {
+    return [];
   }
+}
+
+function saveLearnProjects() {
+  try {
+    writeFileSync(learnStatePath(), `${JSON.stringify([...learnProjects], null, 2)}\n`, "utf8");
+  } catch {
+    /* the in-memory set still works for this run */
+  }
+}
+
+/** Track one project's flag and keep the server in step with the set. */
+async function registerLearnProject(ctx, warn, root) {
+  if (readLearnMcp(root)) learnProjects.add(root);
+  else learnProjects.delete(root);
+  saveLearnProjects();
+  await reconcileLearnMcp(ctx, warn);
+}
+
+/** Mount @deepseek-ai/dsh-mcp-client as a child plugin while any project asks for it. */
+async function mountLearnMcp(ctx, warn) {
   try {
     const entryPath = mcpClientEntry();
-    if (entryPath === null) throw new Error(`the MCP client package is not installed beside this DSH build (execPath=${process.execPath}; resources=${process.resourcesPath}; env=${process.env.DSH_INSTALL_DIR ?? "-"})`);
+    if (entryPath === null) throw new Error("the MCP client package is not installed beside this DSH build");
     const loaded = await import(pathToFileURL(entryPath).href);
     const plugin = loaded.default ?? loaded;
-    ctx.plugin(plugin, {
+    const fiber = ctx.plugin(plugin, {
       serverName: "microsoft-learn-cli",
       transport: "streamable-http",
       url: LEARN_MCP_URL,
@@ -181,10 +206,36 @@ async function startLearnMcp(ctx, cfg, warn) {
     });
     learn.mcp.active = true;
     learn.mcp.error = null;
+    return fiber ?? null;
   } catch (error) {
     learn.mcp.active = false;
     learn.mcp.error = String(error?.message ?? error);
     warn(`could not start the Microsoft Learn MCP server: ${learn.mcp.error}`);
+    return null;
+  }
+}
+
+/**
+ * Keep the server mounted exactly while some project has it on: the choice is
+ * per working directory, so the process-wide server follows the project set.
+ */
+async function reconcileLearnMcp(ctx, warn) {
+  learn.mcp.projects = [...learnProjects];
+  const wanted = learnProjects.size > 0;
+  if (wanted && mcpFiber === null) {
+    mcpFiber = await mountLearnMcp(ctx, warn);
+    if (mcpFiber !== null) ensureLearnCli(warn, false);
+    return;
+  }
+  if (!wanted && mcpFiber !== null) {
+    try {
+      mcpFiber.dispose();
+    } catch {
+      /* an already-disposed fiber is fine */
+    }
+    mcpFiber = null;
+    learn.mcp.active = false;
+    learn.mcp.error = null;
   }
 }
 
@@ -214,8 +265,8 @@ function runNpm(args, options, done) {
  * Keep the `mslearn` CLI available whenever the MCP server is on: detect an
  * existing global install first, install it only when it is missing.
  */
-function ensureLearnCli(cfg, warn, force) {
-  learn.cli.enabled = cfg.learnMcpEnabled === true;
+function ensureLearnCli(warn, force) {
+  learn.cli.enabled = learn.mcp.active === true;
   if (!learn.cli.enabled && force !== true) return;
   if (learn.cli.busy) return;
   if (force !== true && learn.cli.installed === true) return;
@@ -508,6 +559,8 @@ async function buildPanel(ctx, updater, cfg, sessionId, options = {}) {
   return {
     ok: true,
     settings: settingsView(cfg),
+    learnMcp: readLearnMcp(project.root),
+    learn: { active: learn.mcp.active === true, error: learn.mcp.error, cli: learn.cli },
     project: {
       root: project.root,
       cwd: project.cwd,
@@ -663,6 +716,13 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
             } catch (error) {
               panel = { ok: false, error: String(error?.message ?? error) };
             }
+            // Opening the panel registers this project's Learn choice, which is
+            // what decides whether the process-wide MCP server stays mounted.
+            if (panel.ok === true && panel.project && panel.project.root) {
+              void registerLearnProject(ctx, warn, panel.project.root).catch((error) => {
+                warn(`could not track the project's Learn choice: ${String(error?.message ?? error)}`);
+              });
+            }
             rememberPanelRequest({
               at: new Date(startedAt).toISOString(),
               refresh,
@@ -745,7 +805,6 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
             if (INTERVAL_OPTIONS.includes(interval)) patch.intervalHours = interval;
             const max = Math.round(Number(body?.selectMaxSkills));
             if (Number.isFinite(max)) patch.selectMaxSkills = Math.min(MAX_SKILLS_LIMIT, Math.max(MIN_SKILLS_LIMIT, max));
-            if (typeof body?.learnMcpEnabled === "boolean") patch.learnMcpEnabled = body.learnMcpEnabled;
             if (Object.keys(patch).length === 0) {
               sendJson(response, 400, { ok: false, error: "nothing to save" });
               return;
@@ -768,8 +827,35 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
               return;
             }
             await readJsonBody(request);
-            ensureLearnCli(cfg, warn, true);
+            ensureLearnCli(warn, true);
             sendJson(response, 200, { ok: true, settings: settingsView(cfg) });
+          },
+        });
+        add({
+          kind: "exact",
+          path: LEARN_ROUTE,
+          handler: async (request, response) => {
+            if (!mutationAllowed(request) || (request.method ?? "GET") === "GET") {
+              sendJson(response, 403, { ok: false, error: "this change has to come from the DSH window" });
+              return;
+            }
+            const body = await readJsonBody(request);
+            const project = resolveProject(ctx, body?.sessionId);
+            if (project.error !== undefined) {
+              sendJson(response, 409, { ok: false, error: project.error });
+              return;
+            }
+            try {
+              const enabled = setLearnMcp(project.root, body?.enabled === true);
+              await registerLearnProject(ctx, warn, project.root);
+              sendJson(response, 200, {
+                ok: true,
+                learnMcp: enabled,
+                learn: { active: learn.mcp.active === true, error: learn.mcp.error, cli: learn.cli },
+              });
+            } catch (error) {
+              sendJson(response, 500, { ok: false, error: String(error?.message ?? error) });
+            }
           },
         });
         return () => {
@@ -1006,15 +1092,13 @@ export function apply(ctx, config = {}) {
 
   const scheduler = createScheduler(cfg, updater);
   registerRoutes(ctx, updater, cfg, warn, scheduler);
+  // The Learn server follows the project toggles: a panel open registers its
+  // project here, and the server mounts only while some project wants it.
+  for (const root of knownLearnProjects()) learnProjects.add(root);
   try {
-    void startLearnMcp(ctx, cfg, warn);
+    void reconcileLearnMcp(ctx, warn);
   } catch (error) {
-    warn(`could not start the Microsoft Learn MCP server: ${String(error)}`);
-  }
-  try {
-    ensureLearnCli(cfg, warn, false);
-  } catch (error) {
-    warn(`could not install the Microsoft Learn CLI: ${String(error)}`);
+    warn(`could not reconcile the Microsoft Learn MCP server: ${String(error)}`);
   }
   registerTool(ctx, updater, cfg, warn);
   registerPromptSection(ctx, warn);

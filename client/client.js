@@ -22,6 +22,7 @@ window.__ModuleLoader__.load({
     const CLEAR_ENDPOINT = '/dsh-dotnet-skills/clear'
     const SETTINGS_ENDPOINT = '/dsh-dotnet-skills/settings'
     const LEARN_INSTALL_ENDPOINT = '/dsh-dotnet-skills/learn/install'
+    const LEARN_ENDPOINT = '/dsh-dotnet-skills/learn'
     const BRAND = '#512bd4'
 
     /** Panel state shared by the composer button and the overlay dialog. */
@@ -247,6 +248,13 @@ window.__ModuleLoader__.load({
       '.dsdk-error{margin:14px 20px 18px;padding:12px 14px;border-radius:10px;font-size:12.5px;line-height:1.5;',
       'background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3);color:var(--dsw-alias-state-error-primary,#ff6b6b)}',
 
+      /* Microsoft Learn bar inside the dialog (per working directory) */
+      '.dsdk-learn{display:flex;align-items:center;gap:10px;margin:0 20px 8px;padding:8px 12px;border-radius:10px;',
+      'border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.05))}',
+      '.dsdk-learn-label{font-size:12.5px;font-weight:600;flex:none}',
+      '.dsdk-learn-state{font-size:11.5px;color:var(--dsw-alias-label-secondary,#8b929b);min-width:0;',
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+
       /* settings card (Plugins → Installed) */
       '.dsdk-cfg{display:flex;flex-direction:column;gap:12px;width:100%;max-width:640px}',
       '.dsdk-cfg-group{display:flex;flex-direction:column;gap:10px;padding:13px 15px;border-radius:12px;',
@@ -300,6 +308,22 @@ window.__ModuleLoader__.load({
     }
 
     /** The .NET mark as geometry: a stroked N stays crisp where a tiny wordmark blurs. */
+    /** One line describing the Microsoft Learn server and its CLI for the current project. */
+    function learnStateText(panel, strings) {
+      const learn = (panel && panel.learn) || {}
+      const cli = learn.cli || {}
+      const cliText = cli.busy
+        ? strings.learnInstalling
+        : cli.installed === true
+          ? strings.learnInstalled
+          : cli.installed === false
+            ? strings.learnNotInstalled
+            : strings.learnDetecting
+      if (panel.learnMcp !== true) return `${strings.learnOff} · ${strings.learnCliShort}: ${cliText}`
+      if (learn.error) return String(learn.error)
+      return `${learn.active === true ? strings.learnActive : strings.learnInactive} · ${strings.learnCliShort}: ${cliText}`
+    }
+
     function IconDotnet(props) {
       const size = props && props.size ? props.size : 15
       return h(
@@ -417,6 +441,7 @@ window.__ModuleLoader__.load({
       const [query, setQuery] = React.useState('')
       const [selection, setSelection] = React.useState([])
       const [busy, setBusy] = React.useState(false)
+      const [learnBusy, setLearnBusy] = React.useState(false)
       const searchRef = React.useRef(null)
 
       React.useEffect(() => store.subscribe(() => bump((value) => value + 1)), [])
@@ -515,6 +540,24 @@ window.__ModuleLoader__.load({
         }
       }
 
+      /** The Learn server is per working directory: this writes this project's choice. */
+      const toggleLearn = async (next) => {
+        if (learnBusy || sessionId === null || sessionId === undefined) return
+        setLearnBusy(true)
+        try {
+          const result = await request(LEARN_ENDPOINT, { sessionId, enabled: next, lang: uiLang() })
+          if (result && result.ok === true) {
+            setPanel((current) => (current === null ? current : { ...current, learnMcp: result.learnMcp, learn: result.learn }))
+          } else {
+            throw new Error(result?.error ?? 'could not change the Microsoft Learn server')
+          }
+        } catch (failure) {
+          setError(failure && failure.message ? failure.message : String(failure))
+        } finally {
+          setLearnBusy(false)
+        }
+      }
+
       const toggle = (name) => {
         setSelection((current) => (current.includes(name) ? current.filter((entry) => entry !== name) : [...current, name]))
       }
@@ -595,6 +638,21 @@ window.__ModuleLoader__.load({
                       panel.detected.signals.length === 0
                         ? h('span', { className: 'dsdk-chip' }, strings.nothing)
                         : panel.detected.signals.map((signal) => h('span', { className: 'dsdk-chip', key: signal.id }, signal.label)),
+                    )
+                  : null,
+                phase === 'ready'
+                  ? h(
+                      'div',
+                      { className: 'dsdk-learn' },
+                      h('span', { className: 'dsdk-learn-label' }, strings.learnTitle),
+                      h('span', { className: 'dsdk-learn-state' }, learnStateText(panel, strings)),
+                      h('span', { className: 'dsdk-grow' }),
+                      h(Switch, {
+                        checked: panel.learnMcp === true,
+                        disabled: learnBusy,
+                        label: strings.learnTitle,
+                        onChange: toggleLearn,
+                      }),
                     )
                   : null,
                 phase === 'loading'
@@ -741,12 +799,10 @@ window.__ModuleLoader__.load({
       const [draft, setDraft] = React.useState(null)
       const [busy, setBusy] = React.useState(false)
       const [message, setMessage] = React.useState('')
-      const [installing, setInstalling] = React.useState(false)
 
       const read = (source) => ({
         intervalHours: Number(source.intervalHours) || FALLBACK_INTERVALS[0],
         selectMaxSkills: Number(source.selectMaxSkills) || 10,
-        learnMcpEnabled: source.learnMcpEnabled === true,
       })
 
       const loadSettings = React.useCallback(async () => {
@@ -759,17 +815,6 @@ window.__ModuleLoader__.load({
           /* the note below reports the failure when saving */
         }
       }, [])
-
-      React.useEffect(() => {
-        void loadSettings()
-      }, [loadSettings])
-
-      // While the CLI installs, keep reading the status the host records.
-      React.useEffect(() => {
-        if (!installing && !(settings && settings.learn && settings.learn.cli && settings.learn.cli.busy)) return undefined
-        const timer = window.setInterval(() => void loadSettings(), 2000)
-        return () => window.clearInterval(timer)
-      }, [installing, settings, loadSettings])
 
       if (props && props.view === 'summary') {
         return h(
@@ -800,26 +845,6 @@ window.__ModuleLoader__.load({
           setBusy(false)
         }
       }
-
-      const installCli = async () => {
-        if (installing) return
-        setInstalling(true)
-        setMessage('')
-        try {
-          await request(LEARN_INSTALL_ENDPOINT, { lang: uiLang() })
-          await loadSettings()
-        } catch (failure) {
-          setMessage(failure && failure.message ? failure.message : String(failure))
-        } finally {
-          setInstalling(false)
-        }
-      }
-
-      const learn = settings.learn || {}
-      const mcp = learn.mcp || {}
-      const cli = learn.cli || {}
-      const cliBusy = installing || cli.busy === true
-
       return h(
         'div',
         { className: 'dsdk-cfg' },
@@ -854,36 +879,6 @@ window.__ModuleLoader__.load({
               value: String(draft.selectMaxSkills),
               disabled: busy,
               onChange: (event) => setDraft({ ...draft, selectMaxSkills: Number(event.target.value) }),
-            }),
-          ),
-        ),
-        h(
-          'div',
-          { className: 'dsdk-cfg-group' },
-          h('div', { className: 'dsdk-cfg-head' }, strings.learnTitle),
-          h(
-            'div',
-            { className: 'dsdk-cfg-row', 'data-kind': 'switch' },
-            h(
-              'span',
-              { className: 'dsdk-cfg-label' },
-              h('span', null, strings.learnMcp),
-              h(
-                'span',
-                { className: 'dsdk-cfg-help' },
-                `${mcp.enabled === false ? strings.learnOff : mcp.active === true ? strings.learnActive : mcp.error ? mcp.error : strings.learnInactive} · ${strings.learnCliShort}: ${
-                  cliBusy ? strings.learnInstalling : cli.installed === true ? strings.learnInstalled : cli.installed === false ? strings.learnNotInstalled : strings.learnDetecting
-                }`,
-              ),
-              mcp.enabled !== false && cli.installed === false && !cliBusy
-                ? h('button', { type: 'button', className: 'dsdk-cfg-ghost', onClick: installCli }, strings.learnRetry)
-                : null,
-            ),
-            h(Switch, {
-              checked: draft.learnMcpEnabled,
-              disabled: busy,
-              label: strings.learnMcp,
-              onChange: (next) => setDraft({ ...draft, learnMcpEnabled: next }),
             }),
           ),
         ),
