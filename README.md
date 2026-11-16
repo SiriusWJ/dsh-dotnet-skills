@@ -33,19 +33,28 @@ Pure code over the project files; each rule reports the evidence that fired it, 
 
 ## Tools
 
-One model-facing tool, four actions:
+One model-facing tool, five actions:
 
 | Call | Result |
 |---|---|
 | `dotnet_skills { action: "find", query: "msbuild binlog" }` | matching skills: name + one-line description |
 | `dotnet_skills { action: "find" }` | detect the project's stack, list the skills that fit, and show the current injection |
-| `dotnet_skills { action: "apply", skills: ["binlog-generation"] }` | **append** to the project's set (never drops the user's picks); returns each `SKILL.md` path |
-| `dotnet_skills { action: "apply", remove: ["binlog-generation"] }` | drop specific names |
+| `dotnet_skills { action: "add", skills: ["binlog-generation"] }` | add to the project's set (never drops the user's picks); returns each `SKILL.md` path |
+| `dotnet_skills { action: "remove", skills: ["binlog-generation"] }` | remove **only skills this tool added**; user-injected ones are protected |
 | `dotnet_skills { action: "status" }` / `{ action: "sync" }` | cached checkout state / refresh it now |
 
-`find` without a query is the old `analyze`, which is why the separate tool is gone. `apply` is the only write path, so the project injection and the catalog never disagree — the skills join the project catalog on the next step, and the returned paths are readable immediately.
+`find` without a query is the old `analyze`, which is why the separate tool is gone.
 
-The model may use `apply` on its own when a task needs the depth; the composer panel remains the human's way to choose a project-wide set. Both write to `<project>/.dsh/skills`.
+### Who owns what
+
+The project manifest records the injector of every skill:
+
+- `user` — chosen from the composer panel (a human decision);
+- `model` — added by `action: add`.
+
+`action: remove` only deletes `model` entries and reports the `user` ones it kept, so an agent that changes its mind can clean up after itself without touching what you chose. Manifests written before this rule existed (fingerprint only) are treated as `user` — the safe side.
+
+The panel itself (routes `/dsh-dotnet-skills/apply`, `/clear`) always acts as the human: it replaces the whole selection, and clearing removes everything this plugin owns.
 
 ## Configuration
 

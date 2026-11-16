@@ -492,28 +492,33 @@ function cleanNames(list) {
     .filter((name) => name !== "");
 }
 
-/** action=apply: append the named skills to the project's injected set. */
-function applySelection(ctx, updater, args, sessionId) {
+/** action=add / action=remove: mutate the project's injected set. */
+function mutateSelection(ctx, updater, args, sessionId, mode) {
   const project = resolveProject(ctx, sessionId);
   if (project.error !== undefined) return `dotnet_skills: ${project.error}`;
-  const add = cleanNames(args?.skills);
-  const remove = cleanNames(args?.remove);
-  const invalid = [...add, ...remove].filter((name) => !SKILL_NAME.test(name));
+  const names = cleanNames(args?.skills);
+  const invalid = names.filter((name) => !SKILL_NAME.test(name));
   if (invalid.length > 0) return `invalid skill name(s): ${invalid.join(", ")} — names come from action=find.`;
-  if (add.length === 0 && remove.length === 0) return "action=apply needs `skills` to add and/or `remove` to drop.";
+  if (names.length === 0) return mode === "add" ? "action=add needs `skills`." : "action=remove needs `skills`.";
   const index = updater.index();
-  const known = new Set(index.skills.map((skill) => skill.name));
-  const unknown = add.filter((name) => !known.has(name));
-  if (unknown.length > 0) return `unknown skill(s): ${unknown.join(", ")} — search with action=find first.`;
-  const result = applyProject(project.root, add, remove, index);
+  if (mode === "add") {
+    const known = new Set(index.skills.map((skill) => skill.name));
+    const unknown = names.filter((name) => !known.has(name));
+    if (unknown.length > 0) return `unknown skill(s): ${unknown.join(", ")} — search with action=find first.`;
+  }
+  const result = mode === "add" ? applyProject(project.root, names, [], index) : applyProject(project.root, [], names, index);
   const directory = join(project.root, ".dsh", "skills");
   const lines = [
-    `project set: ${result.injected.length} skills (${result.added.length} added, ${result.removed.length} removed, ${result.copied} written)`,
-    "",
-    ...result.injected.slice(0, MAX_LISTED).map((name) => `- ${name} → ${join(directory, name, "SKILL.md")}`),
+    mode === "add"
+      ? `added ${result.added.length} skill(s) — project set: ${result.injected.length}`
+      : `removed ${result.removed.length} skill(s) — project set: ${result.injected.length}`,
   ];
+  if (result.protected !== undefined && result.protected.length > 0) {
+    lines.push(`kept ${result.protected.length} skill(s) the user injected: ${result.protected.join(", ")}`);
+  }
+  lines.push("", ...result.injected.slice(0, MAX_LISTED).map((name) => `- ${name} → ${join(directory, name, "SKILL.md")}`));
   if (result.injected.length > MAX_LISTED) lines.push(`… ${result.injected.length - MAX_LISTED} more`);
-  lines.push("", "Read a listed SKILL.md now for its instructions, or load it with the skill tool once the project catalog refreshes.");
+  if (mode === "add") lines.push("", "Read a listed SKILL.md now for its instructions, or load it with the skill tool once the project catalog refreshes.");
   return lines.join("\n");
 }
 
@@ -525,11 +530,11 @@ function registerTool(ctx, updater, cfg, warn) {
         const dispose = scoped.tools.register({
           name: "dotnet_skills",
           description:
-            "The .NET skill catalog for this project. action=find searches the cached 200+ skills (MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers); without `query` it detects the project's stack and lists the skills that fit. action=apply adds the named skills to the project (appends, never drops the user's picks), so their instructions become readable at the returned paths and they join the project catalog on the next step. action=status reports the cached checkout, action=sync refreshes it. Prefer find before answering .NET/C# work from memory.",
+            "The .NET skill catalog for this project. action=find searches the cached 200+ skills (MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers); without `query` it detects the project's stack and lists the skills that fit. action=add adds the named skills to the project (never drops the user's picks) so their instructions become readable at the returned paths and they join the project catalog on the next step. action=remove removes only skills this tool added itself — anything the user injected from the composer panel is kept and reported. action=status reports the cached checkout, action=sync refreshes it. Prefer find before answering .NET/C# work from memory.",
           parameters: {
             type: "object",
             properties: {
-              action: { type: "string", enum: ["find", "apply", "status", "sync"] },
+              action: { type: "string", enum: ["find", "add", "remove", "status", "sync"] },
               query: {
                 type: "string",
                 description:
@@ -539,12 +544,7 @@ function registerTool(ctx, updater, cfg, warn) {
               skills: {
                 type: "array",
                 items: { type: "string" },
-                description: "For action=apply: skill names to add (kebab-case, from action=find).",
-              },
-              remove: {
-                type: "array",
-                items: { type: "string" },
-                description: "For action=apply: skill names to drop from the project injection.",
+                description: "For action=add or action=remove: the skill names (kebab-case, from action=find).",
               },
             },
             required: ["action"],
@@ -570,7 +570,7 @@ function registerTool(ctx, updater, cfg, warn) {
                 const result = await updater.sync("manual");
                 return { report: `${result.ok ? "synced" : `sync failed: ${result.error}`}\n${formatStatus(updater.status())}` };
               }
-              if (action === "apply") return { report: applySelection(ctx, updater, args, sessionId) };
+              if (action === "add" || action === "remove") return { report: mutateSelection(ctx, updater, args, sessionId, action) };
               if (action === "find") {
                 const query = String(args?.query ?? "").trim();
                 if (query === "") return { report: formatPanel(buildPanel(ctx, updater, cfg, sessionId)) };
@@ -609,7 +609,8 @@ const PROMPT_SECTION = [
   "## .NET skills on demand",
   "A cached catalog of 200+ .NET skills (MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers) is NOT in this session.",
   "For .NET/C# work, search it with `dotnet_skills` and action=find before answering from memory, using the concrete framework plus symptom (e.g. \"msbuild binlog\", \"ef core query performance\", \"xunit migration\"); omit the query to detect the project's stack instead.",
-  "Then add the exact names with `dotnet_skills` and action=apply — it appends to the project's injected set, never removes what the user chose, and returns each SKILL.md path to read; the same skills join the project catalog on the next step.",
+  "Then add the exact names with `dotnet_skills` and action=add — it appends to the project's injected set and returns each SKILL.md path to read; the same skills join the project catalog on the next step.",
+  "action=remove only removes skills this tool added itself; a skill the user injected from the `.net技能` panel is protected and reported back.",
   "Do this whenever a task needs the depth, even if the user never opened the `.net技能` panel. Remove or clear skills only when the user asks.",
 ].join("\n");
 

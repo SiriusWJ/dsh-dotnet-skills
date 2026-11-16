@@ -48,7 +48,7 @@ window.__ModuleLoader__.load({
 
     const STRINGS = {
       zh: {
-        button: '.net技能',
+        button: 'dotnet技能',
         buttonTitle: '按当前项目注入 .NET 技能',
         title: '注入 .NET 技能',
         analysing: '正在分析当前项目…',
@@ -67,7 +67,7 @@ window.__ModuleLoader__.load({
         confirmHint: '确认后写入 <项目>/.dsh/skills，仅本项目会话可见',
       },
       en: {
-        button: '.NET skills',
+        button: 'dotnet skills',
         buttonTitle: 'Inject .NET skills for this project',
         title: 'Inject .NET skills',
         analysing: 'Analysing this project…',
@@ -155,17 +155,34 @@ window.__ModuleLoader__.load({
       return () => tag.remove()
     }
 
-    function IconSkills() {
+    /** The .NET mark: a rounded badge with the NET wordmark, in currentColor. */
+    function IconDotnet() {
       return h(
         'svg',
         { viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', 'aria-hidden': true, style: { display: 'block' } },
-        h('path', {
-          d: 'M8 1.8 9.5 5l3.2.5-2.3 2.3.5 3.2L8 9.5 5.1 11l.5-3.2L3.3 5.5 6.5 5 8 1.8Z',
+        h('rect', {
+          x: 0.9,
+          y: 0.9,
+          width: 14.2,
+          height: 14.2,
+          rx: 3.6,
           stroke: 'currentColor',
-          strokeWidth: 1.15,
-          strokeLinejoin: 'round',
+          strokeWidth: 1.2,
         }),
-        h('path', { d: 'M3.2 12.6h9.6', stroke: 'currentColor', strokeWidth: 1.15, strokeLinecap: 'round' }),
+        h(
+          'text',
+          {
+            x: 8,
+            y: 10.7,
+            textAnchor: 'middle',
+            fontSize: 5.4,
+            fontWeight: 700,
+            letterSpacing: 0.15,
+            fill: 'currentColor',
+            fontFamily: 'inherit',
+          },
+          'NET',
+        ),
       )
     }
 
@@ -242,7 +259,7 @@ window.__ModuleLoader__.load({
             disabled: sessionId === null,
             onClick: () => store.patch({ open: true, sessionId }),
           },
-          h(IconSkills),
+          h(IconDotnet),
           h('span', null, strings.button),
           active ? h('span', { className: 'dsdk-count' }, String(count)) : null,
         ),
@@ -407,7 +424,7 @@ window.__ModuleLoader__.load({
             h(
               'div',
               { className: 'dsdk-title' },
-              h(IconSkills),
+              h(IconDotnet),
               h('span', null, strings.title),
               h('span', { className: 'dsdk-grow' }),
               h('button', { type: 'button', className: 'dsdk-act', style: { height: 24, padding: '0 8px' }, onClick: close, title: strings.cancel }, h(IconClose)),
