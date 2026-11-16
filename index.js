@@ -286,11 +286,17 @@ async function buildPanel(ctx, updater, cfg, sessionId, options = {}) {
   const scope = analysisScope(project.root);
   const description = describeProject(scope);
   const head = updater.state.lastResult?.head ?? null;
-  const key = cacheKey(head, description);
+  const lang = options.lang === "zh" ? "zh" : "en";
+  const key = cacheKey(head, description, lang);
+  const injected = Object.keys(readInjection(project.root).skills);
   let suggested = [];
   let reasons = {};
   let analysis = { source: "model", note: "" };
-  if (!looksLikeDotnet(description)) {
+  if (options.refresh !== true && injected.length > 0) {
+    // Already chosen: just show the current selection, no model call.
+    analysis = { source: "existing", note: "" };
+    suggested = injected;
+  } else if (!looksLikeDotnet(description)) {
     analysis = { source: "skipped", note: "no .NET traces in this project" };
   } else {
     try {
@@ -300,6 +306,7 @@ async function buildPanel(ctx, updater, cfg, sessionId, options = {}) {
         catalog: index.skills,
         sessionId,
         head,
+        lang,
         maxSkills: cfg.selectMaxSkills,
         timeoutMs: cfg.selectTimeoutMs,
         refresh: options.refresh === true,
@@ -319,7 +326,6 @@ async function buildPanel(ctx, updater, cfg, sessionId, options = {}) {
     }
   }
 
-  const injected = Object.keys(readInjection(project.root).skills);
   const byName = new Map(index.skills.map((skill) => [skill.name, skill]));
   const tokensOf = (names) => names.reduce((sum, name) => sum + (byName.get(name)?.tokens ?? 0), 0);
   return {
@@ -433,6 +439,7 @@ function registerRoutes(ctx, updater, cfg, warn) {
             try {
               panel = await buildPanel(ctx, updater, cfg, url.searchParams.get("sessionId"), {
                 refresh: url.searchParams.get("refresh") === "1",
+                lang: url.searchParams.get("lang") === "zh" ? "zh" : "en",
               });
             } catch (error) {
               panel = { ok: false, error: String(error?.message ?? error) };
@@ -462,7 +469,7 @@ function registerRoutes(ctx, updater, cfg, warn) {
               const index = updater.index();
               const names = Array.isArray(body.skills) ? body.skills.filter((name) => typeof name === "string") : [];
               const result = injectProject(project.root, names, index);
-              sendJson(response, 200, { ok: true, project: { root: project.root }, ...result, panel: await buildPanel(ctx, updater, cfg, body.sessionId) });
+              sendJson(response, 200, { ok: true, project: { root: project.root }, ...result, panel: await buildPanel(ctx, updater, cfg, body.sessionId, { lang: body.lang === "zh" ? "zh" : "en" }) });
             } catch (error) {
               sendJson(response, 500, { ok: false, error: String(error?.message ?? error) });
             }
@@ -484,7 +491,7 @@ function registerRoutes(ctx, updater, cfg, warn) {
             }
             try {
               const result = clearProject(project.root);
-              sendJson(response, 200, { ok: true, project: { root: project.root }, ...result, panel: await buildPanel(ctx, updater, cfg, body?.sessionId) });
+              sendJson(response, 200, { ok: true, project: { root: project.root }, ...result, panel: await buildPanel(ctx, updater, cfg, body?.sessionId, { lang: body?.lang === "zh" ? "zh" : "en" }) });
             } catch (error) {
               sendJson(response, 500, { ok: false, error: String(error?.message ?? error) });
             }
@@ -613,7 +620,7 @@ function registerTool(ctx, updater, cfg, warn) {
             const sessionId = exec?.agent?.session?.id ?? null;
             try {
               if (action === "probe") {
-                const panel = await buildPanel(ctx, updater, cfg, sessionId, { refresh: true });
+                const panel = await buildPanel(ctx, updater, cfg, sessionId, { refresh: true, lang: "zh" });
                 return {
                   report: JSON.stringify(
                     {

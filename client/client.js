@@ -61,6 +61,7 @@ window.__ModuleLoader__.load({
         empty: '没有匹配的技能',
         error: '出错了：',
         suggestedTag: 'AI 推荐',
+        existing: '已选技能',
         noDotnet: '这个项目里没有 .NET 痕迹',
         unavailable: '模型暂不可用，可手动搜索选择',
         confirmHint: '写入 <项目>/.dsh/skills · 仅本项目会话可见',
@@ -81,10 +82,17 @@ window.__ModuleLoader__.load({
         empty: 'No matching skill',
         error: 'Failed: ',
         suggestedTag: 'AI pick',
+        existing: 'current selection',
         noDotnet: 'No .NET traces in this project',
         unavailable: 'The model is unavailable — search and pick manually',
         confirmHint: 'Writes <project>/.dsh/skills · only sessions in this project see them',
       },
+    }
+
+    /** Language code for host requests: the reasons must match the UI language. */
+    function uiLang() {
+      const lang = typeof document === 'undefined' ? 'zh' : document.documentElement.lang || 'zh'
+      return lang.toLowerCase().startsWith('zh') ? 'zh' : 'en'
     }
 
     function t() {
@@ -101,6 +109,7 @@ window.__ModuleLoader__.load({
         const cached = analysis.cached ? 'cache' : ''
         return ['AI', cached, seconds].filter((part) => part !== '').join(' · ')
       }
+      if (analysis.source === 'existing') return strings.existing
       if (analysis.source === 'skipped') return strings.noDotnet
       if (analysis.source === 'unavailable') return strings.unavailable
       return analysis.note || ''
@@ -261,7 +270,7 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         let cancelled = false
         if (sessionId === null) return undefined
-        request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}`)
+        request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}&lang=${uiLang()}`)
           .then((payload) => {
             if (cancelled || payload === null || payload.ok !== true) return
             setCount(payload.injected.length)
@@ -335,7 +344,7 @@ window.__ModuleLoader__.load({
         }
         const refresh = forceRefresh.current === true
         forceRefresh.current = false
-        request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}${refresh ? '&refresh=1' : ''}`)
+        request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}&lang=${uiLang()}${refresh ? '&refresh=1' : ''}`)
           .then((payload) => {
             if (cancelled) return
             if (payload === null || payload.ok !== true) throw new Error(payload?.error ?? 'no panel data')
@@ -368,7 +377,7 @@ window.__ModuleLoader__.load({
         if (busy) return
         setBusy(true)
         try {
-          const result = await request(APPLY_ENDPOINT, { sessionId, skills: selection })
+          const result = await request(APPLY_ENDPOINT, { sessionId, skills: selection, lang: uiLang() })
           if (result && result.ok === true && result.panel) {
             applyPanel(result.panel)
             store.patch({ open: false })
@@ -387,7 +396,7 @@ window.__ModuleLoader__.load({
         if (busy) return
         setBusy(true)
         try {
-          const result = await request(CLEAR_ENDPOINT, { sessionId })
+          const result = await request(CLEAR_ENDPOINT, { sessionId, lang: uiLang() })
           if (result && result.ok === true && result.panel) {
             applyPanel(result.panel)
             setSelection([])
@@ -410,7 +419,7 @@ window.__ModuleLoader__.load({
       const rows = React.useMemo(() => {
         if (panel === null) return []
         const needle = query.trim().toLowerCase()
-        const suggested = new Set(panel.suggested)
+        const suggested = new Set(panel.analysis && panel.analysis.source === 'model' ? panel.suggested : [])
         const checked = new Set(selection)
         return panel.catalog
           .filter(
