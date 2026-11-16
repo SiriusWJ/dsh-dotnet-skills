@@ -1,0 +1,34 @@
+# dsh-dotnet-skills — one Host row that keeps a GitHub .NET skill catalog
+# mirrored into the DSH user skill root, on a timer.
+#
+# DSH discovers skills only one level deep: <root>/<name>/SKILL.md, while the
+# catalog repository nests them as
+# catalog/<Collection>/<Package>/skills/<name>/SKILL.md (managedcode/dotnet-skills)
+# or plugins/<plugin>/skills/<name>/SKILL.md (dotnet/skills). The plugin mirrors
+# every skill directory into $DSH_HOME/skills and records what it owns, so a
+# later run can prune upstream removals without touching the user's own skills.
+- insert:
+    - id: dotnet-skills
+      name: dsh-dotnet-skills
+      config:
+        # Source repository (shallow clone, branch below). Changing it replaces
+        # the checkout: a checkout of another repository is never reused.
+        repoUrl: https://github.com/managedcode/dotnet-skills.git
+        branch: main
+        # Default checkout: $DSH_HOME/vendor/dotnet-skills. Override to reuse an
+        # existing checkout instead of letting the plugin clone its own.
+        checkoutDir: ''
+        # Default target: $DSH_HOME/skills (the user skill root).
+        skillsRoot: ''
+        # Check for updates this often, and once shortly after DSH starts.
+        intervalHours: 6
+        runOnStart: true
+        startDelaySeconds: 20
+        # Optional curation. Entries match a collection (top level under
+        # catalog/), a package directory, or a skill name, case-insensitively.
+        #   include: [Frameworks, Testing]     # keep only these
+        #   exclude: [Mobile, XR]             # skip these
+        include: []
+        exclude: []
+        # Git executable; override when `git` is not on the PATH of the DSH process.
+        gitCommand: git

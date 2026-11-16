@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dotnet skills",
+    "description": "Mirrors a GitHub .NET skill catalog (default: managedcode/dotnet-skills, 203 skills) into the DSH user skill root and checks for updates every 6 hours, so the .NET skills stay current while DSH is running."
+  }
+}

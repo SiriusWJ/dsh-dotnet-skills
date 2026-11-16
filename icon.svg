@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="dotnet skills">
+  <rect width="64" height="64" rx="14" fill="#512BD4"/>
+  <path d="M13 42V22h4.6l6.3 11.4L30.2 22h4.5v20h-4.2V29.6l-5.2 9.3h-2.3l-5.2-9.3V42z" fill="#fff"/>
+  <path d="M40.2 42V22h13.6v3.6h-9.3v4.5h8v3.6h-8v4.6h9.4V42z" fill="#fff" opacity=".92"/>
+  <circle cx="47" cy="19" r="3.2" fill="#A78BFA"/>
+  <path d="M40 52h16M40 48h16" stroke="#A78BFA" stroke-width="2.2" stroke-linecap="round" opacity=".7"/>
+</svg>

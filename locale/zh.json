@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "dotnet 技能库",
+    "description": "把 GitHub 上的 .NET 技能目录（默认 managedcode/dotnet-skills，203 个技能）同步到 DSH 用户技能根目录，并每 6 小时检查一次更新，让 .NET 技能在 DSH 运行期间保持最新。"
+  }
+}
