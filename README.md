@@ -7,21 +7,33 @@ A composer button (`技能`) analyses the project you are working in, suggests t
 ## Flow
 
 ```
-composer button ──▶ analyse (local rules, no model, no network)
-                     .csproj TFM + PackageReference, *.sln, global.json,
-                     Directory.Packages.props, *.razor, *.xaml, *.proto,
-                     appsettings.json, host.json, .editorconfig, …
-                ──▶ panel: detected stack chips + searchable skill list (pre-selected)
+composer button ──▶ host gathers project facts (TFMs, package references,
+                     project names, file mix — no guessing)
+                ──▶ one background `ctx.llm` call: the current model sees the
+                     facts + the whole catalog and picks ≤ 8 skills with reasons
+                ──▶ panel: facts chips + the model's picks (pre-selected) +
+                     searchable catalog for anything else, plus 重新分析
                 ──▶ confirm → copy the selection into <project>/.dsh/skills
                 ──▶ DSH's filesystem provider reloads that project root; the next
                      model step sees a skill catalog containing exactly those skills
 ```
 
+Selection is cached per (checkout head, project facts) for 30 minutes, so reopening the panel is instant; `重新分析` forces a fresh model call.
+
 The button shows the injected count for the project, and the state is unified per project — every session working in that project sees the same injection.
 
-## Detection rules
+## Why the model picks, not a rule table
 
-Pure code over the project files; each rule reports the evidence that fired it, and the panel shows the recognised stack as chips. Covered stacks include `.NET`/MSBuild, WinForms, WPF, WinUI, Avalonia, Uno, MAUI, ASP.NET Core, Minimal APIs, Blazor, gRPC, SignalR, EF Core, EF6, xUnit/NUnit/MSTest, Coverlet, Stryker, Playwright, Orleans, Aspire, Azure Functions, WCF, Workflow Foundation, Semantic Kernel, Agent Framework, Microsoft.Extensions.AI, ML.NET, MCP, CPM/NuGet, analyzers/formatting, solution architecture, `.binlog` diagnostics, BenchmarkDotNet, .NET 11, legacy .NET Framework and legacy ASP.NET.
+The first version mapped project files to catalog packages with a rule table. It over-suggested (one common package pulled in a whole package's skills) and missed nuance. The facts are still gathered locally — that is cheap and exact — but the *judgement* now comes from the model, which can weigh "this project has EF Core but the work is about a WinForms grid" and pick two skills instead of twenty.
+
+## Detection
+
+Two layers, deliberately split:
+
+- **Facts** (local, exact, cheap): target frameworks, `PackageReference`/`PackageVersion` names, project names and counts, and the file mix, gathered from `<project>` with bounded traversal.
+- **Judgement** (one background model call): the facts plus the whole catalog go to the current model, which returns at most `selectMaxSkills` (default 8) skills with a one-line reason each.
+
+The panel shows the facts as chips, the model's picks pre-selected with their reasons, and the full catalog for anything else. When the model route is unavailable the panel says so and preselects nothing — it never falls back to a rule table.
 
 ## Behaviour
 
@@ -73,7 +85,7 @@ The `dotnet-skills` row of this bundle's `cordis.patch.yml`; override it from th
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/dsh-dotnet-skills/state?sessionId=` | GET | project, detection, catalog, current injection |
+| `/dsh-dotnet-skills/state?sessionId=&refresh=1` | GET | project facts, model-picked suggestions, catalog, current injection (`refresh=1` re-runs the model call) |
 | `/dsh-dotnet-skills/apply` | POST | `{sessionId, skills[]}` → inject and prune |
 | `/dsh-dotnet-skills/clear` | POST | `{sessionId}` → remove everything this plugin injected |
 
@@ -82,5 +94,6 @@ Mutations require `content-type: application/json` and a same-origin `Origin`, s
 ## Limitations
 
 - Runs while DSH runs; the catalog refreshes at the next 6-hour check, not upstream's commit instant.
-- Detection is rule-based: an unusual project layout can be under-detected, which is why the panel lets you search and add anything manually.
+- The model's picks are cached for 30 minutes per (checkout head, project facts); use `重新分析` for a fresh call.
+- One panel analysis costs one auxiliary model request (facts + catalog ≈ 7k input tokens, ≤700 output); reopening the panel is free until the cache expires.
 - Skill content is licensed by its upstream repository (`managedcode/dotnet-skills`).

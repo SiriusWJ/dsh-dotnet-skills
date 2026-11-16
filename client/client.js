@@ -49,7 +49,7 @@ window.__ModuleLoader__.load({
         button: 'dotnet技能',
         buttonTitle: '按当前项目注入 .NET 技能',
         title: '注入 .NET 技能',
-        analysing: '正在分析当前项目…',
+        analysing: 'AI 正在挑选合适的技能…',
         detected: '识别到',
         nothing: '没有识别到 .NET 技术栈',
         search: '搜索技能（名称 / 包 / 说明）',
@@ -57,16 +57,19 @@ window.__ModuleLoader__.load({
         inject: '注入',
         clear: '清空',
         cancel: '取消',
+        refresh: '重新分析',
         empty: '没有匹配的技能',
         error: '出错了：',
-        suggestedTag: '建议',
+        suggestedTag: 'AI 推荐',
+        noDotnet: '这个项目里没有 .NET 痕迹',
+        unavailable: '模型暂不可用，可手动搜索选择',
         confirmHint: '写入 <项目>/.dsh/skills · 仅本项目会话可见',
       },
       en: {
         button: 'dotnet skills',
         buttonTitle: 'Inject .NET skills for this project',
         title: 'Inject .NET skills',
-        analysing: 'Analysing this project…',
+        analysing: 'The model is picking skills…',
         detected: 'Detected',
         nothing: 'No .NET stack recognised',
         search: 'Search skills (name, package, description)',
@@ -74,9 +77,12 @@ window.__ModuleLoader__.load({
         inject: 'Inject',
         clear: 'Clear',
         cancel: 'Cancel',
+        refresh: 'Re-analyse',
         empty: 'No matching skill',
         error: 'Failed: ',
-        suggestedTag: 'suggested',
+        suggestedTag: 'AI pick',
+        noDotnet: 'No .NET traces in this project',
+        unavailable: 'The model is unavailable — search and pick manually',
         confirmHint: 'Writes <project>/.dsh/skills · only sessions in this project see them',
       },
     }
@@ -84,6 +90,20 @@ window.__ModuleLoader__.load({
     function t() {
       const lang = typeof document === 'undefined' ? 'zh' : document.documentElement.lang || 'zh'
       return lang.toLowerCase().startsWith('zh') ? STRINGS.zh : STRINGS.en
+    }
+
+    /** Small status chip: which model picked the skills, and how long it took. */
+    function analysisLabel(panel, strings) {
+      const analysis = panel && panel.analysis
+      if (!analysis) return ''
+      if (analysis.source === 'model') {
+        const seconds = analysis.durationMs ? `${(analysis.durationMs / 1000).toFixed(1)}s` : ''
+        const cached = analysis.cached ? 'cache' : ''
+        return ['AI', cached, seconds].filter((part) => part !== '').join(' · ')
+      }
+      if (analysis.source === 'skipped') return strings.noDotnet
+      if (analysis.source === 'unavailable') return strings.unavailable
+      return analysis.note || ''
     }
 
     const CSS = [
@@ -137,6 +157,9 @@ window.__ModuleLoader__.load({
       '.dsdk-row[data-checked="true"]{background:rgba(81,43,212,.12);border-color:rgba(129,140,248,.32)}',
       '.dsdk-row input{margin-top:3px;accent-color:' + BRAND + ';width:14px;height:14px;flex:none}',
       '.dsdk-name{font-size:13px;font-weight:550}',
+      '.dsdk-why{font-size:11.5px;color:#a99cf5;margin-top:2px}',
+      '.dsdk-analysis{font-size:10.5px;background:rgba(129,140,248,.14);border-color:transparent;',
+      'color:var(--dsw-alias-label-secondary,#98a0aa);max-width:46%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dsdk-tag{font-size:10px;font-weight:600;letter-spacing:.4px;padding:1px 6px;border-radius:6px;margin-left:8px;',
       'background:rgba(129,140,248,.2);color:#c7c9ff;text-transform:uppercase}',
       '.dsdk-meta{font-size:11px;color:var(--dsw-alias-label-secondary,#8b929b);margin-top:2px}',
@@ -285,7 +308,9 @@ window.__ModuleLoader__.load({
       const [query, setQuery] = React.useState('')
       const [selection, setSelection] = React.useState([])
       const [busy, setBusy] = React.useState(false)
+      const [refreshToken, setRefreshToken] = React.useState(0)
       const searchRef = React.useRef(null)
+      const forceRefresh = React.useRef(false)
 
       React.useEffect(() => store.subscribe(() => bump((value) => value + 1)), [])
 
@@ -308,7 +333,9 @@ window.__ModuleLoader__.load({
           setPhase('error')
           return undefined
         }
-        request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}`)
+        const refresh = forceRefresh.current === true
+        forceRefresh.current = false
+        request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}${refresh ? '&refresh=1' : ''}`)
           .then((payload) => {
             if (cancelled) return
             if (payload === null || payload.ok !== true) throw new Error(payload?.error ?? 'no panel data')
@@ -324,7 +351,7 @@ window.__ModuleLoader__.load({
         return () => {
           cancelled = true
         }
-      }, [open, sessionId, applyPanel])
+      }, [open, sessionId, refreshToken, applyPanel])
 
       React.useEffect(() => {
         if (!open) return undefined
@@ -393,7 +420,12 @@ window.__ModuleLoader__.load({
               skill.package.toLowerCase().includes(needle) ||
               skill.description.toLowerCase().includes(needle),
           )
-          .map((skill) => ({ ...skill, suggested: suggested.has(skill.name), checked: checked.has(skill.name) }))
+          .map((skill) => ({
+            ...skill,
+            suggested: suggested.has(skill.name),
+            checked: checked.has(skill.name),
+            reason: (panel.reasons && panel.reasons[skill.name]) || '',
+          }))
           .sort((left, right) => {
             // Chosen rows stay on top; suggested ones follow; the rest stays alphabetical.
             if (left.checked !== right.checked) return left.checked ? -1 : 1
@@ -428,6 +460,11 @@ window.__ModuleLoader__.load({
                     'div',
                     { className: 'dsdk-headrow' },
                     h('div', { className: 'dsdk-title' }, h(IconDotnet, { size: 18 }), h('span', null, strings.title)),
+                    h(
+                      'span',
+                      { className: 'dsdk-chip dsdk-chip-label dsdk-analysis', title: panel && panel.analysis ? panel.analysis.note || '' : '' },
+                      analysisLabel(panel, strings),
+                    ),
                     h('button', { type: 'button', className: 'dsdk-close', onClick: close, title: strings.cancel, 'aria-label': strings.cancel }, h(IconClose)),
                   ),
                   panel && panel.project ? h('div', { className: 'dsdk-sub' }, `${panel.project.name} — ${panel.project.root}`) : null,
@@ -486,6 +523,7 @@ window.__ModuleLoader__.load({
                                     skill.suggested ? h('span', { className: 'dsdk-tag' }, strings.suggestedTag) : null,
                                   ),
                                   h('span', { className: 'dsdk-meta' }, `${skill.package} · ≈${skill.tokens} tok`),
+                                  skill.reason ? h('span', { className: 'dsdk-why' }, skill.reason) : null,
                                   skill.description ? h('span', { className: 'dsdk-desc' }, skill.description) : null,
                                 ),
                               ),
@@ -501,6 +539,19 @@ window.__ModuleLoader__.load({
                         ),
                         h('span', { className: 'dsdk-grow' }),
                         h('span', { className: 'dsdk-hint' }, strings.confirmHint),
+                        h(
+                          'button',
+                          {
+                            type: 'button',
+                            className: 'dsdk-act',
+                            onClick: () => {
+                              forceRefresh.current = true
+                              setRefreshToken((value) => value + 1)
+                            },
+                            disabled: busy,
+                          },
+                          strings.refresh,
+                        ),
                         h(
                           'button',
                           {

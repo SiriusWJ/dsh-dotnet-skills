@@ -19,8 +19,9 @@ import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildIndex } from "./lib/catalog.js";
-import { analyzeProject } from "./lib/detect.js";
 import { applyProject, clearProject, injectProject, readInjection, skillsDir } from "./lib/inject.js";
+import { describeProject, looksLikeDotnet } from "./lib/project.js";
+import { cacheKey, selectSkills } from "./lib/select.js";
 import { formatMatches, searchSkills } from "./lib/search.js";
 
 export const inject = ["tools"];
@@ -39,6 +40,8 @@ const DEFAULTS = {
   intervalHours: 6,
   runOnStart: true,
   startDelaySeconds: 20,
+  selectMaxSkills: 8,
+  selectTimeoutMs: 45_000,
   gitCommand: "git",
 };
 
@@ -265,7 +268,12 @@ function resolveProject(ctx, sessionId) {
  * panel payload
  * ------------------------------------------------------------------ */
 
-function buildPanel(ctx, updater, cfg, sessionId) {
+/**
+ * Assemble the panel payload. The skill suggestion is a background model call
+ * (cached per checkout head + project facts); when it fails the panel still
+ * lists the whole catalog, it just preselects nothing.
+ */
+async function buildPanel(ctx, updater, cfg, sessionId, options = {}) {
   const project = resolveProject(ctx, sessionId);
   if (project.error !== undefined) return { ok: false, error: project.error };
   let index;
@@ -274,28 +282,61 @@ function buildPanel(ctx, updater, cfg, sessionId) {
   } catch (error) {
     return { ok: false, error: String(error?.message ?? error), project: { root: project.root } };
   }
-  const analysis = analyzeProject(project.root);
-  const byPackage = new Map();
-  for (const skill of index.skills) {
-    const list = byPackage.get(skill.packageName) ?? [];
-    list.push(skill.name);
-    byPackage.set(skill.packageName, list);
+
+  const description = describeProject(project.root);
+  const head = updater.state.lastResult?.head ?? null;
+  const key = cacheKey(head, description);
+  let suggested = [];
+  let reasons = {};
+  let analysis = { source: "model", note: "" };
+  if (!looksLikeDotnet(description)) {
+    analysis = { source: "skipped", note: "no .NET traces in this project" };
+  } else {
+    try {
+      const picked = await selectSkills(ctx, {
+        key,
+        description,
+        catalog: index.skills,
+        sessionId,
+        head,
+        maxSkills: cfg.selectMaxSkills,
+        timeoutMs: cfg.selectTimeoutMs,
+        refresh: options.refresh === true,
+      });
+      suggested = picked.suggested;
+      reasons = picked.reasons;
+      analysis = {
+        source: "model",
+        model: picked.model,
+        durationMs: picked.durationMs,
+        cached: picked.cached === true,
+        at: picked.at,
+        note: suggested.length === 0 ? "the model returned no usable skill" : "",
+      };
+    } catch (error) {
+      analysis = { source: "unavailable", note: String(error?.message ?? error) };
+    }
   }
-  const suggested = [];
-  for (const packageName of analysis.packages) {
-    const names = byPackage.get(packageName);
-    if (names === undefined) continue;
-    for (const name of names) if (!suggested.includes(name)) suggested.push(name);
-  }
+
   const injected = Object.keys(readInjection(project.root).skills);
   const byName = new Map(index.skills.map((skill) => [skill.name, skill]));
   const tokensOf = (names) => names.reduce((sum, name) => sum + (byName.get(name)?.tokens ?? 0), 0);
   return {
     ok: true,
-    project: { root: project.root, name: analysis.name, skillsDir: skillsDir(project.root), projectScoped: project.root !== project.cwd },
+    project: {
+      root: project.root,
+      name: description.name,
+      skillsDir: skillsDir(project.root),
+      projectScoped: project.root !== project.cwd,
+    },
     injected,
-    detected: { signals: analysis.signals.map((signal) => ({ id: signal.id, label: signal.label })), stats: analysis.stats },
+    detected: {
+      signals: description.labels.map((label) => ({ id: label, label })),
+      stats: description.facts,
+    },
+    analysis,
     suggested,
+    reasons,
     totals: {
       injected: tokensOf(injected),
       suggested: tokensOf(suggested),
@@ -383,9 +424,17 @@ function registerRoutes(ctx, updater, cfg, warn) {
         scoped.webServer.register({
           kind: "exact",
           path: STATE_ROUTE,
-          handler: (request, response) => {
+          handler: async (request, response) => {
             const url = new URL(request.url ?? STATE_ROUTE, "http://localhost");
-            sendJson(response, 200, buildPanel(ctx, updater, cfg, url.searchParams.get("sessionId")));
+            let panel;
+            try {
+              panel = await buildPanel(ctx, updater, cfg, url.searchParams.get("sessionId"), {
+                refresh: url.searchParams.get("refresh") === "1",
+              });
+            } catch (error) {
+              panel = { ok: false, error: String(error?.message ?? error) };
+            }
+            sendJson(response, 200, panel);
           },
         });
         scoped.webServer.register({
@@ -410,7 +459,7 @@ function registerRoutes(ctx, updater, cfg, warn) {
               const index = updater.index();
               const names = Array.isArray(body.skills) ? body.skills.filter((name) => typeof name === "string") : [];
               const result = injectProject(project.root, names, index);
-              sendJson(response, 200, { ok: true, project: { root: project.root }, ...result, panel: buildPanel(ctx, updater, cfg, body.sessionId) });
+              sendJson(response, 200, { ok: true, project: { root: project.root }, ...result, panel: await buildPanel(ctx, updater, cfg, body.sessionId) });
             } catch (error) {
               sendJson(response, 500, { ok: false, error: String(error?.message ?? error) });
             }
@@ -432,7 +481,7 @@ function registerRoutes(ctx, updater, cfg, warn) {
             }
             try {
               const result = clearProject(project.root);
-              sendJson(response, 200, { ok: true, project: { root: project.root }, ...result, panel: buildPanel(ctx, updater, cfg, body?.sessionId) });
+              sendJson(response, 200, { ok: true, project: { root: project.root }, ...result, panel: await buildPanel(ctx, updater, cfg, body?.sessionId) });
             } catch (error) {
               sendJson(response, 500, { ok: false, error: String(error?.message ?? error) });
             }
@@ -451,19 +500,23 @@ function registerRoutes(ctx, updater, cfg, warn) {
  * model tool
  * ------------------------------------------------------------------ */
 
-function formatPanel(panel) {
-  if (panel.ok !== true) return `dotnet skills: ${panel.error}`;
-  const lines = [
-    `project   : ${panel.project.name}  (${panel.project.root})`,
-    `injected  : ${panel.injected.length} skills ≈ ${panel.totals.injected} tokens`,
-    `detected  : ${panel.detected.signals.map((signal) => signal.label).join(", ") || "nothing recognised"}`,
-    `suggested : ${panel.suggested.length} skills ≈ ${panel.totals.suggested} tokens`,
+/** Facts for the model, without spending a second model call inside a tool. */
+function formatFacts(ctx, sessionId) {
+  const project = resolveProject(ctx, sessionId);
+  if (project.error !== undefined) return `dotnet_skills: ${project.error}`;
+  const description = describeProject(project.root);
+  const injected = Object.keys(readInjection(project.root).skills);
+  const facts = description.facts;
+  return [
+    `project    : ${description.name}  (${project.root})`,
+    `injected   : ${injected.length}${injected.length > 0 ? ` — ${injected.join(", ")}` : ""}`,
+    `frameworks : ${facts.frameworks.join(", ") || "unknown"}`,
+    `projects   : ${facts.projects}${facts.projectNames.length > 0 ? ` (${facts.projectNames.join(", ")})` : ""}`,
+    `packages   : ${facts.packages.slice(0, 15).join(", ") || "none"}${facts.packages.length > 15 ? " …" : ""}`,
     "",
-    "suggested skills:",
-    ...panel.suggested.slice(0, 40).map((name) => `  - ${name}`),
-  ];
-  if (panel.suggested.length > 40) lines.push(`  … ${panel.suggested.length - 40} more`);
-  return lines.join("\n");
+    'Search the catalog with action=find and a query (e.g. "msbuild binlog"), then action=add the names you need.',
+    "The composer panel (.net技能) asks the model to preselect a set for this project.",
+  ].join("\n");
 }
 
 
@@ -519,7 +572,7 @@ function registerTool(ctx, updater, cfg, warn) {
         const dispose = scoped.tools.register({
           name: "dotnet_skills",
           description:
-            "The .NET skill catalog for this project. action=find searches the cached 200+ skills (MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers); without `query` it detects the project's stack and lists the skills that fit. action=add adds the named skills to the project (never drops the user's picks) so their instructions become readable at the returned paths and they join the project catalog on the next step. action=remove removes only skills this tool added itself — anything the user injected from the composer panel is kept and reported. The catalog refreshes itself in the background; prefer find before answering .NET/C# work from memory.",
+            "The .NET skill catalog for this project. action=find with `query` searches the cached 200+ skills (MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers); without `query` it reports the project's facts (frameworks, packages, current injection). action=add adds the named skills to the project (never drops the user's picks) so their instructions become readable at the returned paths and they join the project catalog on the next step. action=remove removes only skills this tool added itself — anything the user injected from the composer panel is kept and reported. The catalog refreshes itself in the background; prefer find before answering .NET/C# work from memory.",
           parameters: {
             type: "object",
             properties: {
@@ -557,7 +610,7 @@ function registerTool(ctx, updater, cfg, warn) {
               if (action === "add" || action === "remove") return { report: mutateSelection(ctx, updater, args, sessionId, action) };
               if (action === "find") {
                 const query = String(args?.query ?? "").trim();
-                if (query === "") return { report: formatPanel(buildPanel(ctx, updater, cfg, sessionId)) };
+                if (query === "") return { report: formatFacts(ctx, sessionId) };
                 const index = updater.index();
                 return { report: formatMatches(searchSkills(index, query, args?.limit), index.skills.length, query) };
               }
