@@ -33,16 +33,23 @@ Pure code over the project files; each rule reports the evidence that fired it, 
 
 ## Tools
 
-`dotnet_skills` — `status` (checkout state), `analyze` (detected stack + suggestions for the current project), `apply` (inject a skill-name list), `clear`, `sync` (refresh the checkout now).
+`dotnet_skills` — `status` (checkout state), `analyze` (detected stack + suggestions for the current project), `apply` (replace the project's injected set), `clear`, `sync` (refresh the checkout now).
 
-`netskill_find` — the model's own way in. The catalog is not in the session, so the model searches it with keywords and loads exactly the skill it needs:
+`dotnet_skills_find` — search the catalog and list names with a one-line description:
 
 ```
-netskill_find { query: "msbuild binlog" }        → matching entries (name, package, token cost, description)
-netskill_find { name: "binlog-generation" }      → the full instructions + the skill's resource directory
+dotnet_skills_find { query: "msbuild binlog" }
+  - `msbuild` — Use before MSBuild custom-target or incremental-generation repairs…
+  - `binlog-generation` — Generate MSBuild binary logs (binlogs) for build diagnostics…
 ```
 
-This is different from the composer panel on purpose: the panel decides what a *project* keeps, while `netskill_find` pulls one skill into the current step without touching the project.
+`dotnet_skills_load` — load one skill's instructions by exact name, resolved from the **current working directory's project** first (`<project>/.dsh/skills/<name>`), then from the cached checkout:
+
+```
+dotnet_skills_load { name: "binlog-generation" }
+```
+
+Loading is separate from searching on purpose: the search result stays a few lines, and spending a skill's tokens is a deliberate second step. Both are different from the composer panel, which decides what a *project* keeps.
 
 ## Configuration
 

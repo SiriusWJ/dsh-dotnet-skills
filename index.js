@@ -15,7 +15,7 @@
  *   - serve the composer panel (routes) and the model's `dotnet_skills` tool.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildIndex } from "./lib/catalog.js";
@@ -554,83 +554,163 @@ function registerTool(ctx, updater, cfg, warn) {
 }
 
 /* ------------------------------------------------------------------ *
- * model tool: catalog search + load
+ * model tools: search the catalog, load one skill
  * ------------------------------------------------------------------ */
 
-function registerFindTool(ctx, updater, warn) {
+const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const MAX_BODY = 60 * 1024;
+
+function stripFrontmatter(text) {
+  const match = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/u.exec(text);
+  return match === null ? text : text.slice(match[0].length);
+}
+
+function renderSkill(name, file, directory) {
+  let body = "";
+  try {
+    body = readFileSync(file, "utf8");
+  } catch (error) {
+    return { ok: false, error: `could not read ${name}: ${String(error?.message ?? error)}` };
+  }
+  const trimmed = stripFrontmatter(body).trim();
+  const capped = trimmed.length > MAX_BODY ? `${trimmed.slice(0, MAX_BODY)}\n\n[truncated at ${Math.round(MAX_BODY / 1024)} KB]` : trimmed;
+  return {
+    ok: true,
+    report: [
+      `<skill_content name="${name}">`,
+      `Base directory for this skill: ${directory}`,
+      "Resolve relative paths mentioned in the instructions against that directory; load referenced resources only as needed.",
+      "",
+      capped,
+      "</skill_content>",
+    ].join("\n"),
+  };
+}
+
+/**
+ * `dotnet_skills_find` lists matches; `dotnet_skills_load` reads one skill.
+ * Splitting them keeps the search result small (names + one line) and makes a
+ * second, deliberate step out of spending the skill's tokens.
+ */
+function registerFindTools(ctx, updater, warn) {
   try {
     ctx.inject(["tools"], (scoped) => {
       try {
         if (typeof scoped?.tools?.register !== "function") return;
-        const dispose = scoped.tools.register({
-          name: "netskill_find",
-          description:
-            "Search the cached .NET skill catalog and load one skill's full instructions. The catalog (200+ .NET skills: MSBuild, EF Core, WinForms/WPF/Blazor/MAUI, testing, profiling, migrations, architecture) is deliberately NOT in this session, so search it when a task needs deeper .NET/C# expertise than you have, then load the exact skill. Pass `query` to search by keywords, or `name` to load a skill whose name you already know.",
-          parameters: {
-            type: "object",
-            properties: {
-              query: {
-                type: "string",
-                description:
-                  'Keywords across skill name, package and description, e.g. "msbuild binlog", "ef core performance", "winforms designer", "xunit migration".',
-              },
-              name: {
-                type: "string",
-                description: "Exact skill name to load; takes precedence over query.",
-              },
-              limit: {
-                type: "integer",
-                description: "Maximum matches to list (default 12, maximum 50).",
-              },
-            },
-            additionalProperties: false,
-          },
-          output: {
-            schema: {
+        const disposers = [];
+
+        disposers.push(
+          scoped.tools.register({
+            name: "dotnet_skills_find",
+            description:
+              "Search the cached .NET skill catalog (200+ skills: MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers) and list the matching skills with a one-line description. The catalog is deliberately NOT in this session, so search it for .NET/C# work before answering from memory, then load what you need with dotnet_skills_load.",
+            parameters: {
               type: "object",
-              properties: { report: { type: "string" } },
-              required: ["report"],
+              properties: {
+                query: {
+                  type: "string",
+                  description:
+                    'Keywords across skill name, package and description, e.g. "msbuild binlog", "ef core performance", "winforms designer", "xunit migration".',
+                },
+                limit: {
+                  type: "integer",
+                  description: "Maximum matches to list (default 12, maximum 50).",
+                },
+              },
+              required: ["query"],
               additionalProperties: false,
             },
-            render(_args, value) {
-              return [{ type: "text", text: typeof value?.report === "string" ? value.report : JSON.stringify(value, null, 2) }];
+            output: {
+              schema: {
+                type: "object",
+                properties: { report: { type: "string" } },
+                required: ["report"],
+                additionalProperties: false,
+              },
+              render(_args, value) {
+                return [{ type: "text", text: typeof value?.report === "string" ? value.report : JSON.stringify(value, null, 2) }];
+              },
             },
-          },
-          async execute(args) {
-            try {
-              const index = updater.index();
-              const name = String(args?.name ?? "").trim();
-              if (name !== "") {
+            async execute(args) {
+              try {
+                const index = updater.index();
+                const query = String(args?.query ?? "").trim();
+                if (query === "") return { report: "dotnet_skills_find needs a `query` (keywords such as \"msbuild binlog\")." };
+                return { report: formatMatches(searchSkills(index, query, args?.limit), index.skills.length, query) };
+              } catch (error) {
+                return { report: `dotnet_skills_find: ${String(error?.message ?? error)}` };
+              }
+            },
+          }),
+        );
+
+        disposers.push(
+          scoped.tools.register({
+            name: "dotnet_skills_load",
+            description:
+              "Load one .NET skill's full instructions by exact name. The skill is resolved from the current working directory's project first (skills already injected into `<project>/.dsh/skills`), then from the cached catalog, and the result names the skill's base directory for its references. Search names first with dotnet_skills_find.",
+            parameters: {
+              type: "object",
+              properties: {
+                name: { type: "string", description: 'Exact skill name, e.g. "binlog-generation".' },
+              },
+              required: ["name"],
+              additionalProperties: false,
+            },
+            output: {
+              schema: {
+                type: "object",
+                properties: { report: { type: "string" } },
+                required: ["report"],
+                additionalProperties: false,
+              },
+              render(_args, value) {
+                return [{ type: "text", text: typeof value?.report === "string" ? value.report : JSON.stringify(value, null, 2) }];
+              },
+            },
+            async execute(args, exec) {
+              try {
+                const name = String(args?.name ?? "").trim();
+                if (!SKILL_NAME.test(name)) {
+                  return { report: `dotnet_skills_load needs an exact kebab-case skill name (got "${name}"). Search with dotnet_skills_find.` };
+                }
+                const project = resolveProject(ctx, exec?.agent?.session?.id);
+                if (project.error === undefined) {
+                  const injected = join(project.root, ".dsh", "skills", name, "SKILL.md");
+                  if (existsSync(injected)) {
+                    const rendered = renderSkill(name, injected, join(project.root, ".dsh", "skills", name));
+                    return { report: rendered.ok ? rendered.report : rendered.error };
+                  }
+                }
+                const index = updater.index();
                 const loaded = loadSkill(index, name);
                 if (loaded.ok !== true) return { report: loaded.error };
-                return {
-                  report: [
-                    `<skill_content name="${loaded.skill.name}" package="${loaded.skill.packageName}">`,
-                    `Base directory for this skill: ${loaded.dir}`,
-                    "Resolve relative paths mentioned in the instructions against that directory; load referenced resources only as needed.",
-                    "",
-                    loaded.body,
-                    "</skill_content>",
-                  ].join("\n"),
-                };
+                const rendered = renderSkill(name, join(loaded.dir, "SKILL.md"), loaded.dir);
+                return { report: rendered.ok ? rendered.report : rendered.error };
+              } catch (error) {
+                return { report: `dotnet_skills_load: ${String(error?.message ?? error)}` };
               }
-              const query = String(args?.query ?? "").trim();
-              if (query === "") {
-                return { report: "netskill_find needs `query` to search the catalog, or `name` to load one skill." };
-              }
-              return { report: formatMatches(searchSkills(index, query, args?.limit), index.skills.length, query) };
-            } catch (error) {
-              return { report: `netskill_find: ${String(error?.message ?? error)}` };
-            }
-          },
-        });
+            },
+          }),
+        );
+
         try {
-          if (typeof dispose === "function" && typeof scoped.on === "function") scoped.on("dispose", dispose);
+          if (typeof scoped.on === "function") {
+            scoped.on("dispose", () => {
+              for (const dispose of disposers) {
+                try {
+                  if (typeof dispose === "function") dispose();
+                } catch {
+                  /* disposal is best-effort */
+                }
+              }
+            });
+          }
         } catch {
           /* disposal is best-effort */
         }
       } catch (error) {
-        warn(`could not register the netskill_find tool: ${String(error)}`);
+        warn(`could not register the .NET skill tools: ${String(error)}`);
       }
     });
   } catch (error) {
@@ -649,7 +729,7 @@ function registerFindTool(ctx, updater, warn) {
 const PROMPT_SECTION = [
   "## .NET skills on demand",
   "A cached catalog of 200+ .NET skills (MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers) is NOT in this session.",
-  "For .NET/C# work, search it with `netskill_find` before answering from memory, using the concrete framework plus symptom (e.g. \"msbuild binlog\", \"ef core query performance\", \"xunit migration\"), then load the exact skill with `netskill_find` and `name`.",
+  "For .NET/C# work, search it with `dotnet_skills_find` before answering from memory, using the concrete framework plus symptom (e.g. \"msbuild binlog\", \"ef core query performance\", \"xunit migration\"), then load the exact skill with `dotnet_skills_load`.",
   "Apply a loaded skill's instructions; do not paste its body back to the user.",
   "The composer button (`.net技能`) injects a project-wide selection — that is a human decision: do not call `dotnet_skills` apply or clear unless the user asks for it.",
 ].join("\n");
@@ -692,7 +772,7 @@ export function apply(ctx, config = {}) {
 
   registerRoutes(ctx, updater, cfg, warn);
   registerTool(ctx, updater, cfg, warn);
-  registerFindTool(ctx, updater, warn);
+  registerFindTools(ctx, updater, warn);
   registerPromptSection(ctx, warn);
 
   try {
