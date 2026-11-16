@@ -279,6 +279,8 @@ window.__ModuleLoader__.load({
       'border:1px solid rgba(129,140,248,.32);background:rgba(81,43,212,.14);transition:border-color .15s ease,background-color .15s ease}',
       '.dsdk-learn-pill[data-on="true"]{border-color:rgba(129,140,248,.6);background:rgba(81,43,212,.26)}',
       '.dsdk-learn-label{font-size:11.5px;font-weight:650;letter-spacing:.2px;white-space:nowrap;flex:none}',
+      /* Narrow windows: keep the label and the switch, drop the prose. */
+      '@media (max-width:760px){.dsdk-learn-state{display:none}.dsdk-chip.dsdk-analysis{display:none}}',
       '.dsdk-learn-state{font-size:11px;color:var(--dsw-alias-label-secondary,#98a0aa);min-width:0;max-width:110px;flex:0 1 auto;',
       'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 
