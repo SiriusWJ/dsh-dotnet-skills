@@ -1,62 +1,48 @@
 /**
- * dsh-dotnet-skills — keep a GitHub .NET skill catalog mirrored into the DSH
- * user skill root, on a timer.
+ * dsh-dotnet-skills — on-demand .NET skills for the project you are working in.
  *
- * Why a plugin instead of a shell script: the update has to happen while DSH is
- * running (that is exactly when a new skill matters), with no OS scheduler
- * rights, no token cost, and no dependency on the user's login. A Host row with
- * a timer does that; the skills themselves stay ordinary markdown on disk, so
- * DSH's own filesystem provider discovers and reloads them.
+ * Nothing is mirrored globally any more: the vendored checkout is only a cache,
+ * and a skill reaches the model when a human injects it for a project. The
+ * composer button (client half) opens a panel, the host scans the project,
+ * rules map the recognised .NET stack to catalog packages, and the confirmed
+ * selection is copied into `<project>/.dsh/skills` — the project skill root DSH
+ * already watches — so only sessions in that project see those skills.
  *
- * Repositories nest their skills differently while DSH discovers only
- * `$DSH_HOME/skills/<name>/SKILL.md` (one level deep):
- *
- *   managedcode/dotnet-skills  catalog/<Collection>/<Package>/skills/<name>/SKILL.md
- *   dotnet/skills              plugins/<plugin>/skills/<name>/SKILL.md
- *   plain collections          skills/<name>/SKILL.md
- *
- * so discovery walks `catalog/`, `plugins/` and `skills/` (bounded depth, site
- * and vendored copies skipped) and flattens every skill into the skill root.
- *
- * Ownership rules:
- *   - Only directories recorded in the manifest are ever deleted.
- *   - A name that exists but is not recorded is the user's own skill: skipped.
- *   - A failed git step never prunes: the previous known-good mirror stays.
+ * Responsibilities:
+ *   - keep the checkout fresh (git fetch, every 6 hours, no token cost);
+ *   - analyse a project's files locally (lib/detect.js);
+ *   - copy/prune a selection in the project (lib/inject.js);
+ *   - serve the composer panel (routes) and the model's `dotnet_skills` tool.
  */
 import { execFile } from "node:child_process";
-import { copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join, relative, sep } from "node:path";
+import { dirname, join } from "node:path";
+import { buildIndex } from "./lib/catalog.js";
+import { analyzeProject } from "./lib/detect.js";
+import { clearProject, injectProject, readInjection, skillsDir } from "./lib/inject.js";
 
 export const inject = ["tools"];
 
-const ROW_ID = "dotnet-skills";
 const TAG = "dsh-dotnet-skills";
-const LOG_LIMIT = 40;
+const STATE_ROUTE = "/dsh-dotnet-skills/state";
+const APPLY_ROUTE = "/dsh-dotnet-skills/apply";
+const CLEAR_ROUTE = "/dsh-dotnet-skills/clear";
 const GIT_TIMEOUT_MS = 180_000;
-
-const BLOCK_BEGIN = "# >>> dsh-dotnet-skills (managed) >>>";
-const BLOCK_END = "# <<< dsh-dotnet-skills <<<";
-/** Markers of the earlier one-off PowerShell sync, replaced when seen. */
-const LEGACY_BLOCKS = [
-  ["# >>> dotnet-skills (managed by sync-dotnet-skills.ps1) >>>", "# <<< dotnet-skills <<<"],
-];
+const LOG_LIMIT = 30;
 
 const DEFAULTS = {
   repoUrl: "https://github.com/managedcode/dotnet-skills.git",
   branch: "main",
   checkoutDir: "",
-  skillsRoot: "",
   intervalHours: 6,
   runOnStart: true,
   startDelaySeconds: 20,
-  include: [],
-  exclude: [],
   gitCommand: "git",
 };
 
 /* ------------------------------------------------------------------ *
- * paths and small helpers
+ * paths and configuration
  * ------------------------------------------------------------------ */
 
 function dshHome() {
@@ -64,26 +50,15 @@ function dshHome() {
   return fromEnv === "" ? join(homedir(), ".dsh") : fromEnv;
 }
 
-const KEBAB = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
-
-function toList(value) {
-  return Array.isArray(value) ? value.map((entry) => String(entry).trim()).filter((entry) => entry !== "") : [];
-}
-
 function resolveConfig(config) {
   const merged = { ...DEFAULTS, ...(config ?? {}) };
-  const home = dshHome();
   return {
     ...merged,
-    checkoutDir: String(merged.checkoutDir ?? "").trim() || join(home, "vendor", "dotnet-skills"),
-    skillsRoot: String(merged.skillsRoot ?? "").trim() || join(home, "skills"),
+    checkoutDir: String(merged.checkoutDir ?? "").trim() || join(dshHome(), "vendor", "dotnet-skills"),
     intervalHours: Math.max(0.05, Number(merged.intervalHours) || DEFAULTS.intervalHours),
     startDelaySeconds: Math.max(0, Number(merged.startDelaySeconds) || 0),
     runOnStart: merged.runOnStart !== false,
-    include: toList(merged.include),
-    exclude: toList(merged.exclude),
-    manifestPath: join(home, "dotnet-skills.manifest.json"),
-    statusPath: join(home, "dotnet-skills.status.json"),
+    statusPath: join(dshHome(), "dotnet-skills.status.json"),
   };
 }
 
@@ -102,7 +77,6 @@ function gitCandidates(configured) {
   return [...new Set(list.filter((entry) => entry !== ""))];
 }
 
-/** Compare remotes regardless of trailing slash, `.git` suffix or SSH vs HTTPS. */
 function normalizeRemote(url) {
   return String(url ?? "")
     .trim()
@@ -115,9 +89,8 @@ function normalizeRemote(url) {
 function runGit(candidates, args, cwd) {
   const attempt = (index) =>
     new Promise((resolve) => {
-      const command = candidates[index];
       execFile(
-        command,
+        candidates[index],
         args,
         { cwd, timeout: GIT_TIMEOUT_MS, maxBuffer: 16 * 1024 * 1024, windowsHide: true },
         (error, stdout, stderr) => {
@@ -138,283 +111,7 @@ function runGit(candidates, args, cwd) {
 }
 
 /* ------------------------------------------------------------------ *
- * manifest: what this plugin owns in the skill root
- * ------------------------------------------------------------------ */
-
-function readManifest(path) {
-  try {
-    if (!existsSync(path)) return { version: 1, skills: {} };
-    const raw = JSON.parse(readFileSync(path, "utf8"));
-    if (Array.isArray(raw)) {
-      return { version: 1, skills: Object.fromEntries(raw.map((name) => [String(name), {}])) };
-    }
-    if (raw !== null && typeof raw === "object" && raw.skills !== null && typeof raw.skills === "object") {
-      return { version: 1, skills: raw.skills };
-    }
-    return { version: 1, skills: {} };
-  } catch {
-    return { version: 1, skills: {} };
-  }
-}
-
-/* ------------------------------------------------------------------ *
- * filesystem mirror
- * ------------------------------------------------------------------ */
-
-/** Directory fingerprint, so unchanged skills are not rewritten every check. */
-function fingerprint(directory) {
-  let size = 0;
-  let mtime = 0;
-  const walk = (current) => {
-    for (const entry of readdirSync(current, { withFileTypes: true })) {
-      const path = join(current, entry.name);
-      if (entry.isDirectory()) {
-        walk(path);
-        continue;
-      }
-      try {
-        const stat = statSync(path);
-        size += stat.size;
-        if (stat.mtimeMs > mtime) mtime = stat.mtimeMs;
-      } catch {
-        /* a file vanished mid-walk; the next run corrects it */
-      }
-    }
-  };
-  walk(directory);
-  return `${size}:${Math.round(mtime)}`;
-}
-
-/**
- * Windows raises EPERM/EBUSY/EIO when an antivirus scanner, an indexer or the
- * skill watcher still holds a handle on the directory being replaced. Those are
- * transient: retry a few times with a short backoff instead of failing the run.
- */
-const RETRYABLE = new Set(["EPERM", "EBUSY", "EIO", "EACCES", "ENOTEMPTY"]);
-
-function sleepSync(ms) {
-  try {
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-  } catch {
-    /* no SharedArrayBuffer: skip the backoff rather than fail the copy */
-  }
-}
-
-function withRetry(operation, attempts = 5) {
-  let lastError;
-  for (let index = 0; index < attempts; index += 1) {
-    try {
-      return operation();
-    } catch (error) {
-      lastError = error;
-      if (!RETRYABLE.has(error?.code)) throw error;
-      sleepSync(80 * (index + 1));
-    }
-  }
-  throw lastError;
-}
-
-/**
- * Copy a skill directory into place without deleting the destination first.
- *
- * Deleting a watched directory and recreating it is what failed on Windows:
- * the watcher (and Defender) briefly hold handles on the tree. Overwriting each
- * file in place, then removing only the extras, keeps the same directory entry
- * so the watcher sees ordinary edits.
- */
-function mergeCopy(source, target) {
-  if (!existsSync(target)) withRetry(() => mkdirSync(target, { recursive: true }));
-  const names = new Set();
-  for (const entry of readdirSync(source, { withFileTypes: true })) {
-    names.add(entry.name);
-    const from = join(source, entry.name);
-    const to = join(target, entry.name);
-    if (entry.isDirectory()) {
-      mergeCopy(from, to);
-      continue;
-    }
-    withRetry(() => copyFileSync(from, to));
-  }
-  let present = [];
-  try {
-    present = readdirSync(target, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of present) {
-    if (names.has(entry.name)) continue;
-    const path = join(target, entry.name);
-    withRetry(() => rmSync(path, { recursive: true, force: true }));
-  }
-}
-
-/** Candidate skills: any directory carrying SKILL.md inside a search root. */
-const SEARCH_ROOTS = ["catalog", "plugins", "skills"];
-const MAX_DEPTH = 4;
-/** Repositories carry site, CLI and vendored copies that must not become skills. */
-const SKIP_DIRS = new Set([
-  ".git",
-  "node_modules",
-  ".github",
-  ".gitlab",
-  ".idea",
-  ".vscode",
-  ".claude",
-  "external-sources",
-  "docs",
-  "tests",
-  "test",
-  "output",
-  "artifacts",
-  "github-pages",
-  "cli",
-  "scripts",
-  "config",
-]);
-
-function collectSkillDirs(root, depth, out) {
-  if (depth > MAX_DEPTH) return;
-  let entries;
-  try {
-    entries = readdirSync(root, { withFileTypes: true });
-  } catch {
-    return;
-  }
-  for (const entry of entries) {
-    if (!entry.isDirectory() || SKIP_DIRS.has(entry.name)) continue;
-    const path = join(root, entry.name);
-    if (existsSync(join(path, "SKILL.md"))) {
-      out.push({ dir: path, name: entry.name });
-      continue; // its subtree holds resources, not more skills
-    }
-    collectSkillDirs(path, depth + 1, out);
-  }
-}
-
-/** `include`/`exclude` match a collection (top level), a package, or the skill name. */
-function segmentMatches(list, segments, name) {
-  if (list.length === 0) return false;
-  const lowered = new Set(list.map((entry) => entry.toLowerCase()));
-  if (lowered.has(name.toLowerCase())) return true;
-  return segments.some((segment) => lowered.has(segment.toLowerCase()));
-}
-
-/** Filters out the search root, the `skills/` level and the skill directory. */
-function relevantSegments(checkoutDir, directory) {
-  const parts = relative(checkoutDir, directory).split(sep);
-  parts.pop(); // the skill directory itself
-  parts.shift(); // the search root (catalog / plugins / skills)
-  return parts.filter((part) => part !== "" && part.toLowerCase() !== "skills");
-}
-
-function discover(checkoutDir, cfg, warnings) {
-  const found = [];
-  const seen = new Map();
-  for (const rootName of SEARCH_ROOTS) {
-    const root = join(checkoutDir, rootName);
-    if (!existsSync(root)) continue;
-    const candidates = [];
-    collectSkillDirs(root, 0, candidates);
-    for (const candidate of candidates) {
-      if (!KEBAB.test(candidate.name)) {
-        warnings.push(`${candidate.name}: not a kebab-case skill name, skipped`);
-        continue;
-      }
-      if (seen.has(candidate.name)) {
-        warnings.push(`${candidate.name}: duplicate name, ${seen.get(candidate.name)} wins`);
-        continue;
-      }
-      const segments = relevantSegments(checkoutDir, candidate.dir);
-      if (cfg.include.length > 0 && !segmentMatches(cfg.include, segments, candidate.name)) continue;
-      if (segmentMatches(cfg.exclude, segments, candidate.name)) continue;
-      seen.set(candidate.name, segments.join("/") || rootName);
-      found.push({ name: candidate.name, segments, source: candidate.dir });
-    }
-  }
-  return found;
-}
-
-/** Rewrite the local-only ignore block in the skill root's git checkout. */
-function writeExcludeBlock(skillsRoot, names) {
-  const gitDir = join(skillsRoot, ".git");
-  if (!existsSync(gitDir)) return false;
-  const excludePath = join(gitDir, "info", "exclude");
-  const blocks = [[BLOCK_BEGIN, BLOCK_END], ...LEGACY_BLOCKS];
-  let kept = [];
-  if (existsSync(excludePath)) {
-    let skipping = false;
-    for (const line of readFileSync(excludePath, "utf8").split(/\r?\n/u)) {
-      if (blocks.some(([begin]) => line === begin)) {
-        skipping = true;
-        continue;
-      }
-      if (blocks.some(([, end]) => line === end)) {
-        skipping = false;
-        continue;
-      }
-      if (!skipping) kept.push(line);
-    }
-  }
-  while (kept.length > 0 && kept[kept.length - 1].trim() === "") kept.pop();
-  const block = [BLOCK_BEGIN, ...names.map((name) => `/${name}/`), BLOCK_END];
-  mkdirSync(dirname(excludePath), { recursive: true });
-  writeFileSync(excludePath, [...kept, "", ...block].join("\n") + "\n", "utf8");
-  return true;
-}
-
-/**
- * Mirror the checkout into the skill root.
- * @returns `{ skills, collections, copied, pruned, skipped, unchanged }`
- */
-function mirror(checkoutDir, cfg, warnings) {
-  const manifest = readManifest(cfg.manifestPath);
-  const skills = discover(checkoutDir, cfg, warnings);
-  const results = {
-    skills: skills.length,
-    collections: new Set(skills.map((entry) => entry.segments[0] ?? "")).size,
-    copied: 0,
-    pruned: 0,
-    skipped: 0,
-    unchanged: 0,
-  };
-  const next = {};
-
-  mkdirSync(cfg.skillsRoot, { recursive: true });
-
-  for (const skill of skills) {
-    const target = join(cfg.skillsRoot, skill.name);
-    const owned = Object.prototype.hasOwnProperty.call(manifest.skills, skill.name);
-    if (existsSync(target) && !owned) {
-      warnings.push(`${skill.name}: exists and is not managed here, left alone`);
-      results.skipped += 1;
-      continue;
-    }
-    const prints = fingerprint(skill.source);
-    next[skill.name] = { fingerprint: prints };
-    if (owned && manifest.skills[skill.name]?.fingerprint === prints && existsSync(join(target, "SKILL.md"))) {
-      results.unchanged += 1;
-      continue;
-    }
-    mergeCopy(skill.source, target);
-    results.copied += 1;
-  }
-
-  for (const stale of Object.keys(manifest.skills)) {
-    if (Object.prototype.hasOwnProperty.call(next, stale)) continue;
-    const target = join(cfg.skillsRoot, stale);
-    if (existsSync(target)) {
-      rmSync(target, { recursive: true, force: true });
-      results.pruned += 1;
-    }
-  }
-
-  writeFileSync(cfg.manifestPath, `${JSON.stringify({ version: 1, skills: next }, null, 2)}\n`, "utf8");
-  writeExcludeBlock(cfg.skillsRoot, Object.keys(next).sort());
-  return results;
-}
-
-/* ------------------------------------------------------------------ *
- * update run
+ * checkout + index cache
  * ------------------------------------------------------------------ */
 
 function createUpdater(cfg, warn) {
@@ -422,152 +119,364 @@ function createUpdater(cfg, warn) {
     running: false,
     lastCheckAt: null,
     lastResult: null,
-    nextCheckAt: null,
     logs: [],
+    index: null,
+    indexHead: null,
   };
-
-  try {
-    const saved = JSON.parse(readFileSync(cfg.statusPath, "utf8"));
-    if (saved !== null && typeof saved === "object") {
-      state.lastCheckAt = saved.lastCheckAt ?? null;
-      state.lastResult = saved.lastResult ?? null;
-    }
-  } catch {
-    /* no previous run recorded */
-  }
 
   const log = (line) => {
     state.logs.push(`${new Date().toISOString()} ${line}`);
     if (state.logs.length > LOG_LIMIT) state.logs.splice(0, state.logs.length - LOG_LIMIT);
   };
 
-  const persist = () => {
-    try {
-      writeFileSync(cfg.statusPath, `${JSON.stringify({ lastCheckAt: state.lastCheckAt, lastResult: state.lastResult }, null, 2)}\n`, "utf8");
-    } catch {
-      /* status is a convenience, never a source of truth */
-    }
+  const head = async (git) => {
+    const result = await runGit(git, ["-C", cfg.checkoutDir, "rev-parse", "HEAD"], undefined);
+    return result.ok ? result.stdout : null;
   };
 
+  /** Refresh the checkout; never throws. */
   const updater = {
     state,
-    /** One check: clone or fetch, then mirror. Never throws. */
-    async run(trigger = "interval") {
-      if (state.running) return { ok: false, reason: "an update is already running", state: status() };
+    async sync(trigger = "interval") {
+      if (state.running) return { ok: false, reason: "a sync is already running" };
       state.running = true;
-      const startedAt = new Date().toISOString();
-      const warnings = [];
-      const result = { trigger, startedAt, ok: false, clone: false, recloned: false, headBefore: null, headAfter: null, skills: 0, collections: 0, copied: 0, pruned: 0, skipped: 0, unchanged: 0, changed: false, warnings, error: null };
       const git = gitCandidates(cfg.gitCommand);
+      const result = { ok: false, trigger, clone: false, recloned: false, head: null, changed: false, error: null };
       try {
-        log(`update (${trigger}) from ${cfg.repoUrl}`);
+        log(`sync (${trigger}) from ${cfg.repoUrl}`);
         if (existsSync(join(cfg.checkoutDir, ".git"))) {
-          // A checkout of another repository would silently mirror the wrong
-          // catalog, so a changed `repoUrl` replaces the checkout entirely.
           const origin = await runGit(git, ["-C", cfg.checkoutDir, "remote", "get-url", "origin"], undefined);
           if (!origin.ok || normalizeRemote(origin.stdout) !== normalizeRemote(cfg.repoUrl)) {
             rmSync(cfg.checkoutDir, { recursive: true, force: true });
             result.recloned = true;
-            log(`checkout origin changed (${origin.ok ? origin.stdout : "unknown"}), re-cloning`);
+            log(`origin changed (${origin.ok ? origin.stdout : "unknown"}), re-cloning`);
           }
         }
+        const before = existsSync(join(cfg.checkoutDir, ".git")) ? await head(git) : null;
         if (!existsSync(join(cfg.checkoutDir, ".git"))) {
           mkdirSync(dirname(cfg.checkoutDir), { recursive: true });
           const cloned = await runGit(git, ["clone", "--depth", "1", "--branch", cfg.branch, cfg.repoUrl, cfg.checkoutDir], dirname(cfg.checkoutDir));
           if (!cloned.ok) throw new Error(`git clone failed: ${cloned.stderr || cloned.code}`);
           result.clone = true;
-          log(`cloned into ${cfg.checkoutDir}`);
         } else {
-          const before = await runGit(git, ["-C", cfg.checkoutDir, "rev-parse", "HEAD"], undefined);
-          result.headBefore = before.ok ? before.stdout : null;
           const fetched = await runGit(git, ["-C", cfg.checkoutDir, "fetch", "--depth", "1", "origin", cfg.branch], undefined);
           if (!fetched.ok) throw new Error(`git fetch failed: ${fetched.stderr || fetched.code}`);
           const reset = await runGit(git, ["-C", cfg.checkoutDir, "reset", "--hard", "FETCH_HEAD"], undefined);
           if (!reset.ok) throw new Error(`git reset failed: ${reset.stderr || reset.code}`);
         }
-        const after = await runGit(git, ["-C", cfg.checkoutDir, "rev-parse", "HEAD"], undefined);
-        result.headAfter = after.ok ? after.stdout : null;
-        result.changed = result.clone || result.recloned || result.headBefore !== result.headAfter;
-
-        const mirrored = mirror(cfg.checkoutDir, cfg, warnings);
-        Object.assign(result, mirrored);
+        result.head = await head(git);
+        result.changed = result.clone || result.recloned || before !== result.head;
         result.ok = true;
+        state.index = null; // the checkout moved: rebuild lazily
         state.lastCheckAt = new Date().toISOString();
         state.lastResult = result;
-        log(`ok: ${result.skills} skills in ${result.collections} collections (${result.copied} changed, ${result.pruned} pruned, ${result.unchanged} unchanged)`);
-        if (warnings.length > 0) log(`${warnings.length} warning(s): ${warnings.slice(0, 5).join("; ")}`);
+        log(`ok: head ${String(result.head ?? "?").slice(0, 8)}${result.changed ? " (changed)" : " (unchanged)"}`);
       } catch (error) {
         result.error = String(error?.message ?? error);
         state.lastCheckAt = new Date().toISOString();
         state.lastResult = result;
         log(`failed: ${result.error}`);
-        warn(`update failed: ${result.error}`);
+        warn(`sync failed: ${result.error}`);
       } finally {
         state.running = false;
-        persist();
       }
-      return { ...result, state: status() };
+      return result;
+    },
+    /** Catalog index for the current checkout (rebuilt when the head moves). */
+    index() {
+      if (state.index !== null && state.indexHead === state.lastResult?.head) return state.index;
+      if (!existsSync(join(cfg.checkoutDir, "catalog")) && !existsSync(join(cfg.checkoutDir, "plugins"))) {
+        throw new Error("the skill catalog is not available yet — run a sync first");
+      }
+      state.index = buildIndex(cfg.checkoutDir);
+      state.indexHead = state.lastResult?.head ?? null;
+      return state.index;
+    },
+    status() {
+      return {
+        running: state.running,
+        lastCheckAt: state.lastCheckAt,
+        lastResult: state.lastResult,
+        intervalHours: cfg.intervalHours,
+        checkoutDir: cfg.checkoutDir,
+        repoUrl: cfg.repoUrl,
+        branch: cfg.branch,
+        logs: state.logs.slice(-8),
+      };
     },
   };
-
-  function status() {
-    const next =
-      typeof state.lastCheckAt === "string" && Number.isFinite(Date.parse(state.lastCheckAt))
-        ? new Date(Date.parse(state.lastCheckAt) + cfg.intervalHours * 3600_000).toISOString()
-        : `within ${cfg.intervalHours}h of DSH start`;
-    return {
-      running: state.running,
-      lastCheckAt: state.lastCheckAt,
-      lastResult: state.lastResult,
-      intervalHours: cfg.intervalHours,
-      nextCheckAt: next,
-      checkoutDir: cfg.checkoutDir,
-      skillsRoot: cfg.skillsRoot,
-      repoUrl: cfg.repoUrl,
-      branch: cfg.branch,
-      filters: { include: cfg.include, exclude: cfg.exclude },
-      logs: state.logs.slice(-10),
-    };
-  }
-
-  updater.status = status;
   return updater;
 }
 
 /* ------------------------------------------------------------------ *
- * tool
+ * project resolution
  * ------------------------------------------------------------------ */
 
-function formatStatus(status, verbose) {
+function sessionById(ctx, sessionId) {
+  try {
+    const store = ctx.get("sessions");
+    if (store !== null && store !== undefined && typeof store.get === "function") return store.get(sessionId) ?? null;
+  } catch {
+    /* no session store in this composition */
+  }
+  return null;
+}
+
+function cwdOf(ctx, session) {
+  try {
+    const working = ctx.get("workingDirectory");
+    if (working !== null && working !== undefined && typeof working.get === "function") {
+      const directory = working.get(session);
+      if (typeof directory === "string" && directory !== "") return directory;
+    }
+  } catch {
+    /* fall back to the session header */
+  }
+  const candidate = session?.cwd ?? session?.header?.cwd;
+  return typeof candidate === "string" && candidate !== "" ? candidate : null;
+}
+
+/** DSH's own project rule: the nearest ancestor that contains `.git`. */
+function projectRootOf(cwd) {
+  let directory = cwd;
+  for (let depth = 0; depth < 40; depth += 1) {
+    if (existsSync(join(directory, ".git"))) return directory;
+    const parent = dirname(directory);
+    if (parent === directory) break;
+    directory = parent;
+  }
+  return cwd;
+}
+
+/**
+ * The project a request belongs to.
+ * @returns `{ root, cwd }` or `{ error }`
+ */
+function resolveProject(ctx, sessionId) {
+  const session = sessionId === undefined || sessionId === null ? null : sessionById(ctx, sessionId);
+  if (session === null) return { error: "no live session for that id" };
+  const cwd = cwdOf(ctx, session);
+  if (cwd === null) return { error: "this session reports no working directory" };
+  return { root: projectRootOf(cwd), cwd };
+}
+
+/* ------------------------------------------------------------------ *
+ * panel payload
+ * ------------------------------------------------------------------ */
+
+function buildPanel(ctx, updater, cfg, sessionId) {
+  const project = resolveProject(ctx, sessionId);
+  if (project.error !== undefined) return { ok: false, error: project.error };
+  let index;
+  try {
+    index = updater.index();
+  } catch (error) {
+    return { ok: false, error: String(error?.message ?? error), project: { root: project.root } };
+  }
+  const analysis = analyzeProject(project.root);
+  const byPackage = new Map();
+  for (const skill of index.skills) {
+    const list = byPackage.get(skill.packageName) ?? [];
+    list.push(skill.name);
+    byPackage.set(skill.packageName, list);
+  }
+  const suggested = [];
+  for (const packageName of analysis.packages) {
+    const names = byPackage.get(packageName);
+    if (names === undefined) continue;
+    for (const name of names) if (!suggested.includes(name)) suggested.push(name);
+  }
+  const injected = Object.keys(readInjection(project.root).skills);
+  const byName = new Map(index.skills.map((skill) => [skill.name, skill]));
+  const tokensOf = (names) => names.reduce((sum, name) => sum + (byName.get(name)?.tokens ?? 0), 0);
+  return {
+    ok: true,
+    project: { root: project.root, name: analysis.name, skillsDir: skillsDir(project.root), projectScoped: project.root !== project.cwd },
+    injected,
+    detected: { signals: analysis.signals.map((signal) => ({ id: signal.id, label: signal.label })), stats: analysis.stats },
+    suggested,
+    totals: {
+      injected: tokensOf(injected),
+      suggested: tokensOf(suggested),
+      catalog: tokensOf(index.skills.map((skill) => skill.name)),
+    },
+    catalog: index.skills.map((skill) => ({
+      name: skill.name,
+      collection: skill.collection,
+      package: skill.packageName,
+      tokens: skill.tokens,
+      description: skill.description.slice(0, 220),
+    })),
+    state: updater.status(),
+  };
+}
+
+/* ------------------------------------------------------------------ *
+ * routes
+ * ------------------------------------------------------------------ */
+
+function readJsonBody(request) {
+  return new Promise((resolve) => {
+    let size = 0;
+    const chunks = [];
+    request.on("data", (chunk) => {
+      size += chunk.length;
+      if (size > 1_000_000) {
+        request.destroy();
+        resolve(null);
+        return;
+      }
+      chunks.push(chunk);
+    });
+    request.on("end", () => {
+      const text = Buffer.concat(chunks).toString("utf8");
+      if (text.trim() === "") {
+        resolve({});
+        return;
+      }
+      try {
+        resolve(JSON.parse(text));
+      } catch {
+        resolve(null);
+      }
+    });
+    request.on("error", () => resolve(null));
+  });
+}
+
+function sendJson(response, status, body) {
+  try {
+    const payload = JSON.stringify(body);
+    response.writeHead(status, {
+      "content-type": "application/json; charset=utf-8",
+      "cache-control": "no-store",
+      "content-length": Buffer.byteLength(payload),
+    });
+    response.end(payload);
+  } catch {
+    /* the socket may already be gone */
+  }
+}
+
+/** A POST must be JSON from this page; a cross-site form or a bare script cannot. */
+function mutationAllowed(request) {
+  const contentType = String(request.headers["content-type"] ?? "").toLowerCase();
+  if (!contentType.startsWith("application/json")) return false;
+  const origin = request.headers.origin;
+  const host = request.headers.host;
+  if (typeof origin === "string" && typeof host === "string") {
+    try {
+      if (new URL(origin).host !== host) return false;
+    } catch {
+      return false;
+    }
+  }
+  return true;
+}
+
+function registerRoutes(ctx, updater, cfg, warn) {
+  try {
+    ctx.inject(["webServer"], (scoped) => {
+      try {
+        if (typeof scoped?.webServer?.register !== "function") return;
+        scoped.webServer.register({
+          kind: "exact",
+          path: STATE_ROUTE,
+          handler: (request, response) => {
+            const url = new URL(request.url ?? STATE_ROUTE, "http://localhost");
+            sendJson(response, 200, buildPanel(ctx, updater, cfg, url.searchParams.get("sessionId")));
+          },
+        });
+        scoped.webServer.register({
+          kind: "exact",
+          path: APPLY_ROUTE,
+          handler: async (request, response) => {
+            if (!mutationAllowed(request)) {
+              sendJson(response, 403, { ok: false, error: "this change has to come from the DSH window" });
+              return;
+            }
+            const body = await readJsonBody(request);
+            if (body === null || typeof body !== "object") {
+              sendJson(response, 400, { ok: false, error: "invalid JSON body" });
+              return;
+            }
+            const project = resolveProject(ctx, body.sessionId);
+            if (project.error !== undefined) {
+              sendJson(response, 409, { ok: false, error: project.error });
+              return;
+            }
+            try {
+              const index = updater.index();
+              const names = Array.isArray(body.skills) ? body.skills.filter((name) => typeof name === "string") : [];
+              const result = injectProject(project.root, names, index);
+              sendJson(response, 200, { ok: true, project: { root: project.root }, ...result, panel: buildPanel(ctx, updater, cfg, body.sessionId) });
+            } catch (error) {
+              sendJson(response, 500, { ok: false, error: String(error?.message ?? error) });
+            }
+          },
+        });
+        scoped.webServer.register({
+          kind: "exact",
+          path: CLEAR_ROUTE,
+          handler: async (request, response) => {
+            if (!mutationAllowed(request)) {
+              sendJson(response, 403, { ok: false, error: "this change has to come from the DSH window" });
+              return;
+            }
+            const body = await readJsonBody(request);
+            const project = resolveProject(ctx, body?.sessionId);
+            if (project.error !== undefined) {
+              sendJson(response, 409, { ok: false, error: project.error });
+              return;
+            }
+            try {
+              const result = clearProject(project.root);
+              sendJson(response, 200, { ok: true, project: { root: project.root }, ...result, panel: buildPanel(ctx, updater, cfg, body?.sessionId) });
+            } catch (error) {
+              sendJson(response, 500, { ok: false, error: String(error?.message ?? error) });
+            }
+          },
+        });
+      } catch (error) {
+        warn(`could not register routes: ${String(error)}`);
+      }
+    });
+  } catch (error) {
+    warn(`could not inject the web server: ${String(error)}`);
+  }
+}
+
+/* ------------------------------------------------------------------ *
+ * model tool
+ * ------------------------------------------------------------------ */
+
+function formatStatus(status) {
   const last = status.lastResult;
+  return [
+    `dotnet skills — checkout refreshed every ${status.intervalHours}h`,
+    `repo      : ${status.repoUrl}#${status.branch}`,
+    `checkout  : ${status.checkoutDir}`,
+    `last sync : ${status.lastCheckAt ?? "never"}${last?.ok === false ? ` (failed: ${last.error})` : ""}`,
+    `head      : ${String(last?.head ?? "?").slice(0, 8)}`,
+  ].join("\n");
+}
+
+function formatPanel(panel) {
+  if (panel.ok !== true) return `dotnet skills: ${panel.error}`;
   const lines = [
-    `dotnet skills sync — every ${status.intervalHours}h${status.running ? " (running now)" : ""}`,
-    `repo           : ${status.repoUrl}#${status.branch}`,
-    `checkout       : ${status.checkoutDir}`,
-    `skill root     : ${status.skillsRoot}`,
-    `last check     : ${status.lastCheckAt ?? "never"}`,
-    `next check     : ${status.nextCheckAt}`,
+    `project   : ${panel.project.name}  (${panel.project.root})`,
+    `injected  : ${panel.injected.length} skills ≈ ${panel.totals.injected} tokens`,
+    `detected  : ${panel.detected.signals.map((signal) => signal.label).join(", ") || "nothing recognised"}`,
+    `suggested : ${panel.suggested.length} skills ≈ ${panel.totals.suggested} tokens`,
+    "",
+    "suggested skills:",
+    ...panel.suggested.slice(0, 40).map((name) => `  - ${name}`),
   ];
-  if (last !== null) {
-    lines.push(
-      `last result    : ${last.ok ? "ok" : `failed — ${last.error ?? "unknown"}`}`,
-      `mirrored       : ${last.skills} skills / ${last.collections} collections (head ${String(last.headAfter ?? "?").slice(0, 8)})`,
-      `this run       : ${last.copied} written, ${last.pruned} pruned, ${last.unchanged} unchanged, ${last.skipped} skipped`,
-    );
-    if (last.warnings?.length > 0) lines.push(`warnings       : ${last.warnings.length} (see logs)`);
-  } else {
-    lines.push("last result    : no check yet in this session");
-  }
-  const filters = status.filters;
-  if (filters.include.length > 0) lines.push(`include filter : ${filters.include.join(", ")}`);
-  if (filters.exclude.length > 0) lines.push(`excluded       : ${filters.exclude.join(", ")}`);
-  if (verbose && status.logs.length > 0) {
-    lines.push("", "recent log:", ...status.logs.map((line) => `  ${line}`));
-  }
+  if (panel.suggested.length > 40) lines.push(`  … ${panel.suggested.length - 40} more`);
   return lines.join("\n");
 }
 
-function registerTool(ctx, warn, updater) {
+function registerTool(ctx, updater, cfg, warn) {
   try {
     ctx.inject(["tools"], (scoped) => {
       try {
@@ -575,14 +484,15 @@ function registerTool(ctx, warn, updater) {
         const dispose = scoped.tools.register({
           name: "dotnet_skills",
           description:
-            "Status and manual update for the .NET skills mirror: a Host row keeps a GitHub .NET skill catalog (default: managedcode/dotnet-skills) in sync with the DSH user skill root on a timer (default every 6 hours). Use action=status to see the last check, next check and what was mirrored; action=sync to force a check now.",
+            "Inspect or change the .NET skills injected into the current project. The catalog itself is not in the session: a human injects the relevant subset from the composer button, and this tool reports or adjusts that selection. action=status shows the checkout state, analyze lists the detected stack and suggested skills, apply injects a skill-name list, clear removes everything this plugin injected.",
           parameters: {
             type: "object",
             properties: {
-              action: {
-                type: "string",
-                enum: ["status", "sync"],
-                description: "status reports the timer and last result; sync forces one check immediately.",
+              action: { type: "string", enum: ["status", "sync", "analyze", "apply", "clear"] },
+              skills: {
+                type: "array",
+                items: { type: "string" },
+                description: "For action=apply: the exact skill names to inject into the current project.",
               },
             },
             additionalProperties: false,
@@ -598,12 +508,34 @@ function registerTool(ctx, warn, updater) {
               return [{ type: "text", text: typeof value?.report === "string" ? value.report : JSON.stringify(value, null, 2) }];
             },
           },
-          async execute(args) {
-            if (args?.action === "sync") {
-              const result = await updater.run("manual");
-              return { report: formatStatus(updater.status(), true) + (result.ok ? "" : `\n\nsync failed: ${result.error ?? result.reason}`) };
+          async execute(args, exec) {
+            const action = args?.action ?? "status";
+            const sessionId = exec?.agent?.session?.id ?? null;
+            try {
+              if (action === "sync") {
+                const result = await updater.sync("manual");
+                return { report: `${result.ok ? "synced" : `sync failed: ${result.error}`}\n${formatStatus(updater.status())}` };
+              }
+              if (action === "status") return { report: formatStatus(updater.status()) };
+              if (action === "analyze") return { report: formatPanel(buildPanel(ctx, updater, cfg, sessionId)) };
+              if (action === "clear") {
+                const project = resolveProject(ctx, sessionId);
+                if (project.error !== undefined) return { report: `dotnet skills: ${project.error}` };
+                const result = clearProject(project.root);
+                return { report: `removed ${result.pruned} injected skills from ${project.root}` };
+              }
+              if (action === "apply") {
+                const project = resolveProject(ctx, sessionId);
+                if (project.error !== undefined) return { report: `dotnet skills: ${project.error}` };
+                const names = Array.isArray(args?.skills) ? args.skills : [];
+                if (names.length === 0) return { report: "dotnet skills: action=apply needs a non-empty skills list" };
+                const result = injectProject(project.root, names, updater.index());
+                return { report: `injected ${result.injected.length} skills into ${project.root} (${result.copied} written, ${result.pruned} pruned)` };
+              }
+              return { report: `unknown action: ${action}` };
+            } catch (error) {
+              return { report: `dotnet skills: ${String(error?.message ?? error)}` };
             }
-            return { report: formatStatus(updater.status(), false) };
           },
         });
         try {
@@ -644,7 +576,8 @@ export function apply(ctx, config = {}) {
     return;
   }
 
-  registerTool(ctx, warn, updater);
+  registerRoutes(ctx, updater, cfg, warn);
+  registerTool(ctx, updater, cfg, warn);
 
   try {
     ctx.effect(() => {
@@ -653,13 +586,13 @@ export function apply(ctx, config = {}) {
       if (cfg.runOnStart) {
         handles.push(
           setTimeout(() => {
-            void updater.run("startup");
+            void updater.sync("startup");
           }, Math.max(0, cfg.startDelaySeconds) * 1000),
         );
       }
       handles.push(
         setInterval(() => {
-          void updater.run("interval");
+          void updater.sync("interval");
         }, intervalMs),
       );
       return () => {

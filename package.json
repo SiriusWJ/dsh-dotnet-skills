@@ -1,17 +1,20 @@
 {
   "name": "dsh-dotnet-skills",
-  "version": "1.1.0",
+  "version": "2.0.0",
   "private": true,
   "type": "module",
-  "description": "Keeps a GitHub .NET skill catalog (default: managedcode/dotnet-skills) in sync with the DSH user skill root on a timer (default: every 6 hours).",
+  "description": "Project-scoped .NET skills for DeepSeek Harness: a composer button analyses the project, suggests the matching .NET skills, and injects only those into the project's own skill root.",
   "license": "MIT",
   "exports": {
     ".": "./index.js",
+    "./client": "./client/client.js",
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
   "files": [
     "index.js",
+    "lib",
+    "client",
     "cordis.patch.yml",
     "locale/*.json",
     "icon.svg",
@@ -20,6 +23,11 @@
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true,
+      "inject": ["@deepseek-ai/dsh-client-ui-conversation"]
     }
   }
 }
