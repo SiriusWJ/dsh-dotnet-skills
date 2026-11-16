@@ -33,7 +33,7 @@ Pure code over the project files; each rule reports the evidence that fired it, 
 
 ## Tools
 
-One model-facing tool, four actions:
+One model-facing tool, three actions:
 
 | Call | Result |
 |---|---|
@@ -41,9 +41,8 @@ One model-facing tool, four actions:
 | `dotnet_skills { action: "find" }` | detect the project's stack, list the skills that fit, and show the current injection |
 | `dotnet_skills { action: "add", skills: ["binlog-generation"] }` | add to the project's set (never drops the user's picks); returns each `SKILL.md` path |
 | `dotnet_skills { action: "remove", skills: ["binlog-generation"] }` | remove **only skills this tool added**; user-injected ones are protected |
-| `dotnet_skills { action: "sync" }` | refresh the cached checkout now |
 
-`find` without a query is the old `analyze`, which is why the separate tool is gone. The cached checkout's state is observable from the panel and the host log, so the tool no longer spends a schema field on it.
+`find` without a query is the old `analyze`, which is why the separate tool is gone. Refreshing the checkout is not a tool action: the host does it on its timer (every 6 hours, plus shortly after start), so the model never needs to know how the cache works.
 
 ### Who owns what
 
