@@ -102,8 +102,10 @@ window.__ModuleLoader__.load({
       '.dsdk-layer{position:fixed;inset:0;z-index:1400;pointer-events:auto;display:flex;align-items:center;justify-content:center;',
       'background:rgba(6,8,12,.58);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);animation:dsdk-fade .14s ease-out}',
       '.dsdk-panel{width:min(720px,92vw);max-height:min(78vh,760px);display:flex;flex-direction:column;border-radius:16px;',
-      'background:var(--dsw-alias-bg-overlay,#1b1f27);color:var(--dsw-alias-label-primary,#e9ebee);',
-      'border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.1));box-shadow:0 24px 80px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.35);',
+      'background:var(--dsw-alias-bg-layer-1,#1c2129);',
+      'background-image:linear-gradient(180deg,rgba(255,255,255,.035),rgba(255,255,255,0) 140px);',
+      'color:var(--dsw-alias-label-primary,#e9ebee);',
+      'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));box-shadow:0 24px 80px rgba(0,0,0,.6),0 2px 10px rgba(0,0,0,.4);',
       'overflow:hidden;animation:dsdk-pop .16s cubic-bezier(.2,.8,.3,1)}',
       '.dsdk-head{padding:18px 20px 12px;display:flex;flex-direction:column;gap:7px}',
       '.dsdk-headrow{display:flex;align-items:flex-start;gap:10px}',
@@ -122,9 +124,13 @@ window.__ModuleLoader__.load({
       '.dsdk-search:focus-within{border-color:rgba(129,140,248,.55);box-shadow:0 0 0 3px rgba(81,43,212,.18)}',
       '.dsdk-search input{flex:1;border:0;background:transparent;color:inherit;font:inherit;font-size:13px;outline:none}',
       '.dsdk-search input::placeholder{color:var(--dsw-alias-label-secondary,#8b929b)}',
-      '.dsdk-list{flex:1;overflow:auto;padding:2px 12px 10px}',
-      '.dsdk-list::-webkit-scrollbar{width:8px}',
-      '.dsdk-list::-webkit-scrollbar-thumb{background:rgba(127,127,127,.28);border-radius:999px}',
+      '.dsdk-list{flex:1;overflow:auto;padding:2px 12px 10px;scrollbar-width:thin;',
+      'scrollbar-color:rgba(190,196,208,.45) rgba(255,255,255,.05)}',
+      '.dsdk-list::-webkit-scrollbar{width:10px}',
+      '.dsdk-list::-webkit-scrollbar-track{background:rgba(255,255,255,.05);border-radius:999px}',
+      '.dsdk-list::-webkit-scrollbar-thumb{background:rgba(190,196,208,.42);border-radius:999px;border:2px solid transparent;',
+      'background-clip:content-box}',
+      '.dsdk-list::-webkit-scrollbar-thumb:hover{background:rgba(210,216,228,.62);background-clip:content-box}',
       '.dsdk-row{display:flex;gap:11px;align-items:flex-start;padding:9px 10px;border-radius:10px;cursor:pointer;',
       'border:1px solid transparent;transition:background-color .12s ease,border-color .12s ease}',
       '.dsdk-row:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.13));border-color:var(--dsw-alias-border-l1,rgba(255,255,255,.08))}',
@@ -370,7 +376,6 @@ window.__ModuleLoader__.load({
         }
       }
 
-      const selectedSet = new Set(selection)
       const toggle = (name) => {
         setSelection((current) => (current.includes(name) ? current.filter((entry) => entry !== name) : [...current, name]))
       }
@@ -379,6 +384,7 @@ window.__ModuleLoader__.load({
         if (panel === null) return []
         const needle = query.trim().toLowerCase()
         const suggested = new Set(panel.suggested)
+        const checked = new Set(selection)
         return panel.catalog
           .filter(
             (skill) =>
@@ -387,9 +393,14 @@ window.__ModuleLoader__.load({
               skill.package.toLowerCase().includes(needle) ||
               skill.description.toLowerCase().includes(needle),
           )
-          .map((skill) => ({ ...skill, suggested: suggested.has(skill.name) }))
-          .sort((left, right) => (left.suggested === right.suggested ? left.name.localeCompare(right.name) : left.suggested ? -1 : 1))
-      }, [panel, query])
+          .map((skill) => ({ ...skill, suggested: suggested.has(skill.name), checked: checked.has(skill.name) }))
+          .sort((left, right) => {
+            // Chosen rows stay on top; suggested ones follow; the rest stays alphabetical.
+            if (left.checked !== right.checked) return left.checked ? -1 : 1
+            if (left.suggested !== right.suggested) return left.suggested ? -1 : 1
+            return left.name.localeCompare(right.name)
+          })
+      }, [panel, query, selection])
 
       const chosenTokens =
         panel === null ? 0 : selection.reduce((sum, name) => sum + (panel.catalog.find((skill) => skill.name === name)?.tokens ?? 0), 0)
@@ -458,10 +469,10 @@ window.__ModuleLoader__.load({
                           : rows.map((skill) =>
                               h(
                                 'label',
-                                { className: 'dsdk-row', key: skill.name, 'data-checked': selectedSet.has(skill.name) ? 'true' : 'false' },
+                                { className: 'dsdk-row', key: skill.name, 'data-checked': skill.checked ? 'true' : 'false' },
                                 h('input', {
                                   type: 'checkbox',
-                                  checked: selectedSet.has(skill.name),
+                                  checked: skill.checked,
                                   onChange: () => toggle(skill.name),
                                   'aria-label': skill.name,
                                 }),
