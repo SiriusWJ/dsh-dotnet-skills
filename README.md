@@ -33,26 +33,19 @@ Pure code over the project files; each rule reports the evidence that fired it, 
 
 ## Tools
 
-`dotnet_skills` — `status` (checkout state), `analyze` (detected stack, suggestions and the current injection), `sync` (refresh the checkout now).
+One model-facing tool, four actions:
 
-`dotnet_skills_find` — search the catalog and list names with a one-line description:
+| Call | Result |
+|---|---|
+| `dotnet_skills { action: "find", query: "msbuild binlog" }` | matching skills: name + one-line description |
+| `dotnet_skills { action: "find" }` | detect the project's stack, list the skills that fit, and show the current injection |
+| `dotnet_skills { action: "apply", skills: ["binlog-generation"] }` | **append** to the project's set (never drops the user's picks); returns each `SKILL.md` path |
+| `dotnet_skills { action: "apply", remove: ["binlog-generation"] }` | drop specific names |
+| `dotnet_skills { action: "status" }` / `{ action: "sync" }` | cached checkout state / refresh it now |
 
-```
-dotnet_skills_find { query: "msbuild binlog" }
-  - `msbuild` — Use before MSBuild custom-target or incremental-generation repairs…
-  - `binlog-generation` — Generate MSBuild binary logs (binlogs) for build diagnostics…
-```
+`find` without a query is the old `analyze`, which is why the separate tool is gone. `apply` is the only write path, so the project injection and the catalog never disagree — the skills join the project catalog on the next step, and the returned paths are readable immediately.
 
-`dotnet_skills_apply` — **append** skills to the current project's injected set (it never drops what the user chose), optionally dropping names:
-
-```
-dotnet_skills_apply { skills: ["binlog-generation"] }
-dotnet_skills_apply { remove: ["binlog-generation"] }
-```
-
-The result lists each skill's `SKILL.md` path so the instructions can be read immediately; the skills also join the project catalog from the next step. The model can use this on its own when a task needs the depth — the composer panel remains the human's way to choose a project-wide set, and both write to the same place.
-
-`dotnet_skills_load` was removed on purpose: one write path (apply) keeps the project injection and the catalog in sync instead of introducing a second, invisible way to read skills.
+The model may use `apply` on its own when a task needs the depth; the composer panel remains the human's way to choose a project-wide set. Both write to `<project>/.dsh/skills`.
 
 ## Configuration
 
