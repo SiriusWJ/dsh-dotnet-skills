@@ -21,7 +21,7 @@ import { basename, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import Schema from "@deepseek-ai/schemastery";
 import { buildIndex } from "./lib/catalog.js";
-import { applyProject, clearProject, injectProject, readInjection, readLearnMcp, setLearnMcp, skillsDir } from "./lib/inject.js";
+import { applyProject, catalogDir, clearProject, injectProject, readInjection, readLearnMcp, setLearnMcp, skillsDir, syncProjectSkills } from "./lib/inject.js";
 import { analysisScope, describeProject, looksLikeDotnet } from "./lib/project.js";
 import { cacheKey, selectSkills } from "./lib/select.js";
 import { formatMatches, searchSkills } from "./lib/search.js";
@@ -36,6 +36,8 @@ const GIT_TIMEOUT_MS = 180_000;
 const LOG_LIMIT = 30;
 /** Last panel requests, for diagnosing "I clicked refresh and nothing happened". */
 const recentPanelRequests = [];
+/** Set by apply(): re-copy project skills after the checkout moved. */
+let afterCatalogSync = null;
 /** Route-registration failures, surfaced by action=probe. */
 const routeErrors = [];
 function rememberPanelRequest(entry) {
@@ -161,6 +163,52 @@ function mcpClientEntry() {
 }
 
 /** Roots whose project asked for the server, kept across restarts. */
+/** Projects this plugin wrote into, so a catalog update can refresh them. */
+function projectsPath() {
+  return join(dshHome(), "dotnet-skills.projects.json");
+}
+
+function knownProjects() {
+  try {
+    const list = JSON.parse(readFileSync(projectsPath(), "utf8"));
+    return Array.isArray(list) ? list.filter((root) => typeof root === "string" && existsSync(root)) : [];
+  } catch {
+    return [];
+  }
+}
+
+function rememberProject(projectRoot) {
+  const roots = knownProjects();
+  if (roots.includes(projectRoot)) return;
+  roots.push(projectRoot);
+  try {
+    writeFileSync(projectsPath(), `${JSON.stringify(roots, null, 2)}\\n`, "utf8");
+  } catch {
+    /* the in-memory path still works for this run */
+  }
+}
+
+/** Refresh every project this plugin filled, after the checkout moved. */
+function syncKnownProjects(updater, warn) {
+  let index;
+  try {
+    index = updater.index();
+  } catch (error) {
+    warn(`could not rebuild the catalog index: ${String(error?.message ?? error)}`);
+    return;
+  }
+  for (const root of knownProjects()) {
+    try {
+      const result = syncProjectSkills(root, index);
+      if (result.updated > 0 || result.dropped > 0) {
+        warn(`refreshed ${root}: ${result.updated} skill(s) updated, ${result.dropped} dropped`);
+      }
+    } catch (error) {
+      warn(`could not refresh ${root}: ${String(error?.message ?? error)}`);
+    }
+  }
+}
+
 function learnStatePath() {
   return join(dshHome(), "dotnet-skills.learn.json");
 }
@@ -403,6 +451,14 @@ function createUpdater(cfg, warn) {
         state.lastCheckAt = new Date().toISOString();
         state.lastResult = result;
         log(`ok: head ${String(result.head ?? "?").slice(0, 8)}${result.changed ? " (changed)" : " (unchanged)"}`);
+        if (result.changed && typeof afterCatalogSync === "function") {
+          // Projects that already injected skills pick up the new bodies here.
+          try {
+            await afterCatalogSync();
+          } catch (error) {
+            warn(`could not refresh the project skills after the catalog sync: ${String(error?.message ?? error)}`);
+          }
+        }
       } catch (error) {
         result.error = String(error?.message ?? error);
         state.lastCheckAt = new Date().toISOString();
@@ -569,6 +625,7 @@ async function buildPanel(ctx, updater, cfg, sessionId, options = {}) {
       scope,
       scoped: scope !== project.root,
       skillsDir: skillsDir(project.root),
+      catalogDir: catalogDir(project.root),
       projectScoped: project.root !== project.cwd,
     },
     injected,
@@ -719,6 +776,7 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
             // Opening the panel registers this project's Learn choice, which is
             // what decides whether the process-wide MCP server stays mounted.
             if (panel.ok === true && panel.project && panel.project.root) {
+              rememberProject(panel.project.root);
               void registerLearnProject(ctx, warn, panel.project.root).catch((error) => {
                 warn(`could not track the project's Learn choice: ${String(error?.message ?? error)}`);
               });
@@ -758,6 +816,7 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
             try {
               const index = updater.index();
               const names = Array.isArray(body.skills) ? body.skills.filter((name) => typeof name === "string") : [];
+              rememberProject(project.root);
               const result = injectProject(project.root, names, index);
               sendJson(response, 200, { ok: true, project: { root: project.root }, ...result, panel: await buildPanel(ctx, updater, cfg, body.sessionId, { lang: body.lang === "zh" ? "zh" : "en" }) });
             } catch (error) {
@@ -1090,6 +1149,7 @@ export function apply(ctx, config = {}) {
     return;
   }
 
+  afterCatalogSync = () => syncKnownProjects(updater, warn);
   const scheduler = createScheduler(cfg, updater);
   registerRoutes(ctx, updater, cfg, warn, scheduler);
   // The Learn server follows the project toggles: a panel open registers its

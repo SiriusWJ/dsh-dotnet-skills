@@ -81,7 +81,7 @@ window.__ModuleLoader__.load({
         sessionLabel: '会话目录',
         scopeLabel: '分析范围',
         skillRootLabel: '技能写入',
-        confirmHint: '写入 <项目>/.dsh/skills · 仅本项目会话可见',
+        confirmHint: '写入 <项目>/.dsh/Skills · 仅本项目会话可见',
         learnTitle: 'Microsoft Learn 集成',
         learnMcp: 'MCP 服务器（learn.microsoft.com/api/mcp）',
         learnCliShort: 'CLI',
@@ -129,7 +129,7 @@ window.__ModuleLoader__.load({
         sessionLabel: 'session',
         scopeLabel: 'analysed',
         skillRootLabel: 'skills',
-        confirmHint: 'Writes <project>/.dsh/skills · only sessions in this project see them',
+        confirmHint: 'Writes <project>/.dsh/Skills · only sessions in this project see them',
         learnTitle: 'Microsoft Learn',
         learnMcp: 'MCP server (learn.microsoft.com/api/mcp)',
         learnCliShort: 'CLI',
@@ -656,6 +656,9 @@ window.__ModuleLoader__.load({
                   panel && panel.project ? h('div', { className: 'dsdk-sub' }, `${panel.project.name} — ${panel.project.root}`) : null,
                   panel && panel.project && panel.project.cwd && panel.project.cwd !== panel.project.root
                     ? h('div', { className: 'dsdk-sub' }, `${strings.sessionLabel}: ${panel.project.cwd}`)
+                    : null,
+                  panel && panel.project && panel.project.catalogDir
+                    ? h('div', { className: 'dsdk-sub' }, `${strings.skillRootLabel}: ${panel.project.catalogDir}`)
                     : null,
                   panel && panel.project && panel.project.scoped
                     ? h('div', { className: 'dsdk-sub' }, `${strings.scopeLabel}: ${panel.project.scope}`)
