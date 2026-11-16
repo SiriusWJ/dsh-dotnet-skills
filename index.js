@@ -15,7 +15,7 @@
  *   - serve the composer panel (routes) and the model's `dotnet_skills` tool.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildIndex } from "./lib/catalog.js";
@@ -34,6 +34,8 @@ const GIT_TIMEOUT_MS = 180_000;
 const LOG_LIMIT = 30;
 /** Last panel requests, for diagnosing "I clicked refresh and nothing happened". */
 const recentPanelRequests = [];
+/** Route-registration failures, surfaced by action=probe. */
+const routeErrors = [];
 function rememberPanelRequest(entry) {
   recentPanelRequests.push(entry);
   if (recentPanelRequests.length > 10) recentPanelRequests.shift();
@@ -60,12 +62,75 @@ function dshHome() {
   return fromEnv === "" ? join(homedir(), ".dsh") : fromEnv;
 }
 
+/* ------------------------------------------------------------------ *
+ * user settings (the panel's gear): interval + how many picks
+ * ------------------------------------------------------------------ */
+
+const SETTINGS_ROUTE = "/dsh-dotnet-skills/settings";
+/** Offered refresh intervals, in hours. */
+const INTERVAL_OPTIONS = [6, 12, 24, 72, 168];
+const MAX_SKILLS_LIMIT = 50;
+const MIN_SKILLS_LIMIT = 1;
+
+function settingsPath() {
+  return join(dshHome(), "dotnet-skills.settings.json");
+}
+
+/** Accept only the offered values; everything else falls back to the defaults. */
+function sanitizeSettings(raw) {
+  const settings = {};
+  if (raw === null || typeof raw !== "object") return settings;
+  const interval = Number(raw.intervalHours);
+  if (INTERVAL_OPTIONS.includes(interval)) settings.intervalHours = interval;
+  const max = Math.round(Number(raw.selectMaxSkills));
+  if (Number.isFinite(max)) settings.selectMaxSkills = Math.min(MAX_SKILLS_LIMIT, Math.max(MIN_SKILLS_LIMIT, max));
+  return settings;
+}
+
+function readSettings() {
+  try {
+    return sanitizeSettings(JSON.parse(readFileSync(settingsPath(), "utf8")));
+  } catch {
+    return {};
+  }
+}
+
+function writeSettings(settings) {
+  try {
+    mkdirSync(dirname(settingsPath()), { recursive: true });
+    writeFileSync(settingsPath(), `${JSON.stringify(settings, null, 2)}\n`, "utf8");
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function intervalLabel(hours) {
+  if (hours >= 168) return "1 week";
+  if (hours >= 72) return `${Math.round(hours / 24)} days`;
+  if (hours >= 24) return "1 day";
+  return `${hours} h`;
+}
+
+/** The settings shape both the panel and the settings route return. */
+function settingsView(cfg) {
+  return {
+    intervalHours: cfg.intervalHours,
+    intervalLabel: intervalLabel(cfg.intervalHours),
+    intervalOptions: INTERVAL_OPTIONS.map((hours) => ({ hours, label: intervalLabel(hours) })),
+    selectMaxSkills: cfg.selectMaxSkills,
+    minSkills: MIN_SKILLS_LIMIT,
+    maxSkills: MAX_SKILLS_LIMIT,
+  };
+}
+
 function resolveConfig(config) {
-  const merged = { ...DEFAULTS, ...(config ?? {}) };
+  const merged = { ...DEFAULTS, ...(config ?? {}), ...readSettings() };
   return {
     ...merged,
     checkoutDir: String(merged.checkoutDir ?? "").trim() || join(dshHome(), "vendor", "dotnet-skills"),
-    intervalHours: Math.max(0.05, Number(merged.intervalHours) || DEFAULTS.intervalHours),
+    intervalHours: INTERVAL_OPTIONS.includes(Number(merged.intervalHours)) ? Number(merged.intervalHours) : DEFAULTS.intervalHours,
+    selectMaxSkills: Math.min(MAX_SKILLS_LIMIT, Math.max(MIN_SKILLS_LIMIT, Math.round(Number(merged.selectMaxSkills)) || DEFAULTS.selectMaxSkills)),
     startDelaySeconds: Math.max(0, Number(merged.startDelaySeconds) || 0),
     runOnStart: merged.runOnStart !== false,
     statusPath: join(dshHome(), "dotnet-skills.status.json"),
@@ -336,6 +401,7 @@ async function buildPanel(ctx, updater, cfg, sessionId, options = {}) {
   const tokensOf = (names) => names.reduce((sum, name) => sum + (byName.get(name)?.tokens ?? 0), 0);
   return {
     ok: true,
+    settings: settingsView(cfg),
     project: {
       root: project.root,
       name: description.name,
@@ -431,12 +497,51 @@ function mutationAllowed(request) {
   return true;
 }
 
-function registerRoutes(ctx, updater, cfg, warn) {
+/* ------------------------------------------------------------------ *
+ * checkout refresh timer (restartable, so a settings change applies at once)
+ * ------------------------------------------------------------------ */
+
+function createScheduler(cfg, updater) {
+  let handles = [];
+  const stop = () => {
+    for (const handle of handles) clearTimeout(handle);
+    handles = [];
+  };
+  const start = () => {
+    stop();
+    const intervalMs = Math.max(60_000, cfg.intervalHours * 3600_000);
+    if (cfg.runOnStart) {
+      handles.push(
+        setTimeout(() => {
+          void updater.sync("startup");
+        }, Math.max(0, cfg.startDelaySeconds) * 1000),
+      );
+    }
+    handles.push(
+      setInterval(() => {
+        void updater.sync("interval");
+      }, intervalMs),
+    );
+  };
+  return { start, stop };
+}
+
+function registerRoutes(ctx, updater, cfg, warn, scheduler) {
   try {
     ctx.inject(["webServer"], (scoped) => {
       try {
         if (typeof scoped?.webServer?.register !== "function") return;
-        scoped.webServer.register({
+        const disposers = [];
+        const add = (route) => {
+          // One colliding path must not cost the routes that follow it.
+          try {
+            disposers.push(scoped.webServer.register(route));
+          } catch (error) {
+            routeErrors.push(`${route.path}: ${String(error?.message ?? error)}`);
+            warn(`could not register ${route.path}: ${String(error?.message ?? error)}`);
+          }
+        };
+        add({
           kind: "exact",
           path: STATE_ROUTE,
           handler: async (request, response) => {
@@ -464,7 +569,7 @@ function registerRoutes(ctx, updater, cfg, warn) {
             sendJson(response, 200, panel);
           },
         });
-        scoped.webServer.register({
+        add({
           kind: "exact",
           path: APPLY_ROUTE,
           handler: async (request, response) => {
@@ -492,7 +597,7 @@ function registerRoutes(ctx, updater, cfg, warn) {
             }
           },
         });
-        scoped.webServer.register({
+        add({
           kind: "exact",
           path: CLEAR_ROUTE,
           handler: async (request, response) => {
@@ -514,7 +619,52 @@ function registerRoutes(ctx, updater, cfg, warn) {
             }
           },
         });
+        add({
+          kind: "exact",
+          path: SETTINGS_ROUTE,
+          handler: async (request, response) => {
+            if ((request.method ?? "GET") === "GET") {
+              sendJson(response, 200, { ok: true, settings: settingsView(cfg) });
+              return;
+            }
+            if (!mutationAllowed(request)) {
+              sendJson(response, 403, { ok: false, error: "this change has to come from the DSH window" });
+              return;
+            }
+            const body = await readJsonBody(request);
+            const next = sanitizeSettings(body);
+            if (Object.keys(next).length === 0) {
+              sendJson(response, 400, {
+                ok: false,
+                error: `nothing to save: intervalHours must be one of ${INTERVAL_OPTIONS.join("/")}, selectMaxSkills ${MIN_SKILLS_LIMIT}-${MAX_SKILLS_LIMIT}`,
+              });
+              return;
+            }
+            const saved = { ...readSettings(), ...next };
+            if (!writeSettings(saved)) {
+              sendJson(response, 500, { ok: false, error: `could not write ${settingsPath()}` });
+              return;
+            }
+            Object.assign(cfg, resolveConfig({ ...cfg, ...saved }));
+            try {
+              scheduler.start();
+            } catch (error) {
+              warn(`could not reschedule after a settings change: ${String(error)}`);
+            }
+            sendJson(response, 200, { ok: true, settings: settingsView(cfg) });
+          },
+        });
+        return () => {
+          for (const dispose of disposers) {
+            try {
+              dispose();
+            } catch {
+              /* a route already gone must not break teardown */
+            }
+          }
+        };
       } catch (error) {
+        routeErrors.push(String(error));
         warn(`could not register routes: ${String(error)}`);
       }
     });
@@ -648,6 +798,8 @@ function registerTool(ctx, updater, cfg, warn) {
                       reasons: panel.reasons,
                       totals: panel.totals,
                       recentPanelRequests: recentPanelRequests.slice(-6),
+                      settings: settingsView(cfg),
+                      routeErrors,
                     },
                     null,
                     2,
@@ -734,29 +886,15 @@ export function apply(ctx, config = {}) {
     return;
   }
 
-  registerRoutes(ctx, updater, cfg, warn);
+  const scheduler = createScheduler(cfg, updater);
+  registerRoutes(ctx, updater, cfg, warn, scheduler);
   registerTool(ctx, updater, cfg, warn);
   registerPromptSection(ctx, warn);
 
   try {
     ctx.effect(() => {
-      const handles = [];
-      const intervalMs = Math.max(60_000, cfg.intervalHours * 3600_000);
-      if (cfg.runOnStart) {
-        handles.push(
-          setTimeout(() => {
-            void updater.sync("startup");
-          }, Math.max(0, cfg.startDelaySeconds) * 1000),
-        );
-      }
-      handles.push(
-        setInterval(() => {
-          void updater.sync("interval");
-        }, intervalMs),
-      );
-      return () => {
-        for (const handle of handles) clearTimeout(handle);
-      };
+      scheduler.start();
+      return () => scheduler.stop();
     });
   } catch (error) {
     warn(`could not schedule the timer: ${String(error)}`);

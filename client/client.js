@@ -19,6 +19,7 @@ window.__ModuleLoader__.load({
     const STATE_ENDPOINT = '/dsh-dotnet-skills/state'
     const APPLY_ENDPOINT = '/dsh-dotnet-skills/apply'
     const CLEAR_ENDPOINT = '/dsh-dotnet-skills/clear'
+    const SETTINGS_ENDPOINT = '/dsh-dotnet-skills/settings'
     const BRAND = '#512bd4'
 
     /** Panel state shared by the composer button and the overlay dialog. */
@@ -62,6 +63,16 @@ window.__ModuleLoader__.load({
         error: '出错了：',
         suggestedTag: 'AI 推荐',
         existing: '已选技能',
+        settings: '设置',
+        refreshInterval: '刷新频率',
+        maxPicks: '最大自动推荐',
+        save: '保存',
+        back: '返回',
+        savedNotice: '已保存',
+        hoursUnit: '小时',
+        dayUnit: '天',
+        weekUnit: '周',
+        rangeHint: '范围 1–50',
         noDotnet: '这个项目里没有 .NET 痕迹',
         unavailable: '模型暂不可用，可手动搜索选择',
         confirmHint: '写入 <项目>/.dsh/skills · 仅本项目会话可见',
@@ -83,6 +94,16 @@ window.__ModuleLoader__.load({
         error: 'Failed: ',
         suggestedTag: 'AI pick',
         existing: 'current selection',
+        settings: 'Settings',
+        refreshInterval: 'Refresh',
+        maxPicks: 'Max suggestions',
+        save: 'Save',
+        back: 'Back',
+        savedNotice: 'saved',
+        hoursUnit: 'h',
+        dayUnit: 'day',
+        weekUnit: 'week',
+        rangeHint: '1–50',
         noDotnet: 'No .NET traces in this project',
         unavailable: 'The model is unavailable — search and pick manually',
         confirmHint: 'Writes <project>/.dsh/skills · only sessions in this project see them',
@@ -192,6 +213,18 @@ window.__ModuleLoader__.load({
       'border-top-color:' + BRAND + ';animation:dsdk-rotate .8s linear infinite}',
       '.dsdk-error{margin:14px 20px 18px;padding:12px 14px;border-radius:10px;font-size:12.5px;line-height:1.5;',
       'background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3);color:var(--dsw-alias-state-error-primary,#ff6b6b)}',
+      '.dsdk-form{padding:14px 20px 4px;display:flex;flex-direction:column;gap:6px}',
+      '.dsdk-field{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:9px 0;',
+      'border-bottom:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.06))}',
+      '.dsdk-field:last-child{border-bottom:0}',
+      '.dsdk-label{font-size:13px}',
+      '.dsdk-control{display:flex;align-items:center;gap:8px;min-width:0}',
+      '.dsdk-select,.dsdk-number{height:30px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.16));',
+      'background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.08));color:inherit;font:inherit;font-size:12.5px;padding:0 8px}',
+      '.dsdk-select:focus,.dsdk-number:focus{outline:none;border-color:rgba(129,140,248,.6);box-shadow:0 0 0 3px rgba(81,43,212,.18)}',
+      '.dsdk-number{width:76px;text-align:right}',
+      '.dsdk-sub-hint{font-size:11.5px;color:var(--dsw-alias-label-secondary,#8b929b)}',
+      '.dsdk-notice{font-size:12px;color:var(--dsw-alias-state-success-primary,#22c55e);padding:0 20px 6px}',
       '@keyframes dsdk-rotate{to{transform:rotate(360deg)}}',
       '@keyframes dsdk-fade{from{opacity:0}to{opacity:1}}',
       '@keyframes dsdk-pop{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}',
@@ -233,6 +266,29 @@ window.__ModuleLoader__.load({
         { viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', 'aria-hidden': true },
         h('path', { d: 'M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }),
       )
+    }
+
+    function IconGear() {
+      return h(
+        'svg',
+        { viewBox: '0 0 16 16', width: 15, height: 15, fill: 'none', 'aria-hidden': true },
+        h('circle', { cx: 8, cy: 8, r: 2.3, stroke: 'currentColor', strokeWidth: 1.4 }),
+        h('path', {
+          d: 'M8 1.9v1.6M8 12.5v1.6M1.9 8h1.6M12.5 8h1.6M3.7 3.7l1.1 1.1M11.2 11.2l1.1 1.1M12.3 3.7l-1.1 1.1M4.8 11.2l-1.1 1.1',
+          stroke: 'currentColor',
+          strokeWidth: 1.3,
+          strokeLinecap: 'round',
+        }),
+      )
+    }
+
+    /** Localized interval label: the host returns hours, the panel speaks the UI language. */
+    function intervalText(hours, strings) {
+      const value = Number(hours)
+      if (value >= 168) return `1 ${strings.weekUnit}`
+      if (value >= 72) return `${Math.round(value / 24)} ${strings.dayUnit}`
+      if (value >= 24) return `1 ${strings.dayUnit}`
+      return `${value} ${strings.hoursUnit}`
     }
 
     async function request(url, body) {
@@ -318,6 +374,10 @@ window.__ModuleLoader__.load({
       const [query, setQuery] = React.useState('')
       const [selection, setSelection] = React.useState([])
       const [busy, setBusy] = React.useState(false)
+      const [view, setView] = React.useState('list')
+      const [draft, setDraft] = React.useState({ intervalHours: 6, selectMaxSkills: 10 })
+      const [saving, setSaving] = React.useState(false)
+      const [notice, setNotice] = React.useState('')
       const searchRef = React.useRef(null)
 
       React.useEffect(() => store.subscribe(() => bump((value) => value + 1)), [])
@@ -328,7 +388,34 @@ window.__ModuleLoader__.load({
       const applyPanel = React.useCallback((payload) => {
         setPanel(payload)
         setSelection(payload.injected.length > 0 ? payload.injected : payload.suggested)
+        if (payload.settings) {
+          setDraft({ intervalHours: payload.settings.intervalHours, selectMaxSkills: payload.settings.selectMaxSkills })
+        }
       }, [])
+
+      const saveSettings = async () => {
+        if (saving) return
+        setSaving(true)
+        setNotice('')
+        try {
+          const result = await request(SETTINGS_ENDPOINT, {
+            intervalHours: draft.intervalHours,
+            selectMaxSkills: draft.selectMaxSkills,
+            lang: uiLang(),
+          })
+          if (result === null || result.ok !== true) throw new Error(result?.error ?? 'save failed')
+          setPanel((current) => (current === null ? current : { ...current, settings: result.settings }))
+          setDraft({ intervalHours: result.settings.intervalHours, selectMaxSkills: result.settings.selectMaxSkills })
+          setNotice(strings.savedNotice)
+          setView('list')
+        } catch (failure) {
+          setError(failure && failure.message ? failure.message : String(failure))
+          setPhase('error')
+          setView('list')
+        } finally {
+          setSaving(false)
+        }
+      }
 
       /** One load; `refresh` bypasses both the cache and the "already chosen" shortcut. */
       const load = React.useCallback(
@@ -336,6 +423,8 @@ window.__ModuleLoader__.load({
           const refresh = options !== undefined && options.refresh === true
           setPhase('loading')
           setError('')
+          setView('list')
+          setNotice('')
           if (sessionId === null || sessionId === undefined) {
             setError('no live session id was passed to the panel')
             setPhase('error')
@@ -478,6 +567,7 @@ window.__ModuleLoader__.load({
                       { className: 'dsdk-chip dsdk-chip-label dsdk-analysis', title: panel && panel.analysis ? panel.analysis.note || '' : '' },
                       analysisLabel(panel, strings),
                     ),
+                    h('button', { type: 'button', className: 'dsdk-close', onClick: () => setView(view === 'settings' ? 'list' : 'settings'), title: strings.settings, 'aria-label': strings.settings }, h(IconGear)),
                     h('button', { type: 'button', className: 'dsdk-close', onClick: close, title: strings.cancel, 'aria-label': strings.cancel }, h(IconClose)),
                   ),
                   panel && panel.project ? h('div', { className: 'dsdk-sub' }, `${panel.project.name} — ${panel.project.root}`) : null,
@@ -485,7 +575,61 @@ window.__ModuleLoader__.load({
                     ? h('div', { className: 'dsdk-sub' }, `分析范围：${panel.project.scope}`)
                     : null,
                 ),
-                panel && phase === 'ready'
+                view === 'settings'
+                  ? h(
+                      'div',
+                      { className: 'dsdk-form' },
+                      h(
+                        'div',
+                        { className: 'dsdk-field' },
+                        h('span', { className: 'dsdk-label' }, strings.refreshInterval),
+                        h(
+                          'span',
+                          { className: 'dsdk-control' },
+                          h(
+                            'select',
+                            {
+                              className: 'dsdk-select',
+                              value: String(draft.intervalHours),
+                              onChange: (event) => setDraft((current) => ({ ...current, intervalHours: Number(event.target.value) })),
+                            },
+                            (panel && panel.settings ? panel.settings.intervalOptions : [{ hours: 6 }, { hours: 12 }, { hours: 24 }, { hours: 72 }, { hours: 168 }]).map(
+                              (option) => h('option', { key: option.hours, value: String(option.hours) }, intervalText(option.hours, strings)),
+                            ),
+                          ),
+                        ),
+                      ),
+                      h(
+                        'div',
+                        { className: 'dsdk-field' },
+                        h('span', { className: 'dsdk-label' }, strings.maxPicks),
+                        h(
+                          'span',
+                          { className: 'dsdk-control' },
+                          h('span', { className: 'dsdk-sub-hint' }, strings.rangeHint),
+                          h('input', {
+                            className: 'dsdk-number',
+                            type: 'number',
+                            min: panel && panel.settings ? panel.settings.minSkills : 1,
+                            max: panel && panel.settings ? panel.settings.maxSkills : 50,
+                            value: String(draft.selectMaxSkills),
+                            onChange: (event) => setDraft((current) => ({ ...current, selectMaxSkills: Number(event.target.value) })),
+                          }),
+                        ),
+                      ),
+                      notice !== '' ? h('div', { className: 'dsdk-sub-hint', style: { color: '#22c55e' } }, notice) : null,
+                    )
+                  : null,
+                view === 'settings'
+                  ? h(
+                      'div',
+                      { className: 'dsdk-foot' },
+                      h('span', { className: 'dsdk-grow' }),
+                      h('button', { type: 'button', className: 'dsdk-act', onClick: () => setView('list'), disabled: saving }, strings.back),
+                      h('button', { type: 'button', className: 'dsdk-act', 'data-primary': 'true', onClick: saveSettings, disabled: saving }, strings.save),
+                    )
+                  : null,
+                view === 'list' && panel && phase === 'ready'
                   ? h(
                       'div',
                       { className: 'dsdk-chips' },
@@ -495,11 +639,11 @@ window.__ModuleLoader__.load({
                         : panel.detected.signals.map((signal) => h('span', { className: 'dsdk-chip', key: signal.id }, signal.label)),
                     )
                   : null,
-                phase === 'loading'
+                view === 'list' && phase === 'loading'
                   ? h('div', { className: 'dsdk-loading' }, h('div', { className: 'dsdk-spin' }), h('div', { className: 'dsdk-hint' }, strings.analysing))
                   : null,
-                phase === 'error' ? h('div', { className: 'dsdk-error' }, `${strings.error}${error}`) : null,
-                phase === 'ready'
+                view === 'list' && phase === 'error' ? h('div', { className: 'dsdk-error' }, `${strings.error}${error}`) : null,
+                view === 'list' && phase === 'ready'
                   ? h(
                       'div',
                       { style: { display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 } },
@@ -582,7 +726,7 @@ window.__ModuleLoader__.load({
                       ),
                     )
                   : null,
-                phase === 'error'
+                view === 'list' && phase === 'error'
                   ? h(
                       'div',
                       { className: 'dsdk-foot' },
