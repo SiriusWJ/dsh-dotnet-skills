@@ -639,6 +639,34 @@ function registerFindTool(ctx, updater, warn) {
 }
 
 /* ------------------------------------------------------------------ *
+ * prompt section
+ * ------------------------------------------------------------------ */
+
+/**
+ * One short paragraph: without it the model never looks at the catalog, and
+ * with a long one the plugin costs more than the skills it saves.
+ */
+const PROMPT_SECTION = [
+  "## .NET skills on demand",
+  "A cached catalog of 200+ .NET skills (MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers) is NOT in this session.",
+  "For .NET/C# work, search it with `netskill_find` before answering from memory, using the concrete framework plus symptom (e.g. \"msbuild binlog\", \"ef core query performance\", \"xunit migration\"), then load the exact skill with `netskill_find` and `name`.",
+  "Apply a loaded skill's instructions; do not paste its body back to the user.",
+  "The composer button (`.net技能`) injects a project-wide selection — that is a human decision: do not call `dotnet_skills` apply or clear unless the user asks for it.",
+].join("\n");
+
+function registerPromptSection(ctx, warn) {
+  try {
+    if (typeof ctx?.systemPrompt?.section !== "function") return;
+    ctx.effect(
+      () => ctx.systemPrompt.section({ name: "dsh-dotnet-skills:catalog", order: 176, text: PROMPT_SECTION }),
+      "dsh-dotnet-skills: prompt section",
+    );
+  } catch (error) {
+    warn(`could not add the prompt section: ${String(error)}`);
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * plugin entry
  * ------------------------------------------------------------------ */
 
@@ -665,6 +693,7 @@ export function apply(ctx, config = {}) {
   registerRoutes(ctx, updater, cfg, warn);
   registerTool(ctx, updater, cfg, warn);
   registerFindTool(ctx, updater, warn);
+  registerPromptSection(ctx, warn);
 
   try {
     ctx.effect(() => {
