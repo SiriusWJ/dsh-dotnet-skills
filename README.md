@@ -33,7 +33,7 @@ Pure code over the project files; each rule reports the evidence that fired it, 
 
 ## Tools
 
-`dotnet_skills` — `status` (checkout state), `analyze` (detected stack + suggestions for the current project), `apply` (replace the project's injected set), `clear`, `sync` (refresh the checkout now).
+`dotnet_skills` — `status` (checkout state), `analyze` (detected stack, suggestions and the current injection), `sync` (refresh the checkout now).
 
 `dotnet_skills_find` — search the catalog and list names with a one-line description:
 
@@ -43,13 +43,16 @@ dotnet_skills_find { query: "msbuild binlog" }
   - `binlog-generation` — Generate MSBuild binary logs (binlogs) for build diagnostics…
 ```
 
-`dotnet_skills_load` — load one skill's instructions by exact name, resolved from the **current working directory's project** first (`<project>/.dsh/skills/<name>`), then from the cached checkout:
+`dotnet_skills_apply` — **append** skills to the current project's injected set (it never drops what the user chose), optionally dropping names:
 
 ```
-dotnet_skills_load { name: "binlog-generation" }
+dotnet_skills_apply { skills: ["binlog-generation"] }
+dotnet_skills_apply { remove: ["binlog-generation"] }
 ```
 
-Loading is separate from searching on purpose: the search result stays a few lines, and spending a skill's tokens is a deliberate second step. Both are different from the composer panel, which decides what a *project* keeps.
+The result lists each skill's `SKILL.md` path so the instructions can be read immediately; the skills also join the project catalog from the next step. The model can use this on its own when a task needs the depth — the composer panel remains the human's way to choose a project-wide set, and both write to the same place.
+
+`dotnet_skills_load` was removed on purpose: one write path (apply) keeps the project injection and the catalog in sync instead of introducing a second, invisible way to read skills.
 
 ## Configuration
 

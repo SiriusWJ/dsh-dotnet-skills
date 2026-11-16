@@ -15,13 +15,13 @@
  *   - serve the composer panel (routes) and the model's `dotnet_skills` tool.
  */
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildIndex } from "./lib/catalog.js";
 import { analyzeProject } from "./lib/detect.js";
-import { clearProject, injectProject, readInjection, skillsDir } from "./lib/inject.js";
-import { formatMatches, loadSkill, searchSkills } from "./lib/search.js";
+import { applyProject, clearProject, injectProject, readInjection, skillsDir } from "./lib/inject.js";
+import { formatMatches, searchSkills } from "./lib/search.js";
 
 export const inject = ["tools"];
 
@@ -485,16 +485,11 @@ function registerTool(ctx, updater, cfg, warn) {
         const dispose = scoped.tools.register({
           name: "dotnet_skills",
           description:
-            "Inspect or change the .NET skills injected into the current project. The catalog itself is not in the session: a human injects the relevant subset from the composer button, and this tool reports or adjusts that selection. action=status shows the checkout state, analyze lists the detected stack and suggested skills, apply injects a skill-name list, clear removes everything this plugin injected.",
+            "Report the .NET skill setup for this project. The catalog is not in the session: the composer button lets a human inject a project-wide set, and `dotnet_skills_apply` adds skills on demand. action=status shows the checkout state, analyze lists the detected stack, suggested skills and current injection, sync refreshes the cached catalog now.",
           parameters: {
             type: "object",
             properties: {
-              action: { type: "string", enum: ["status", "sync", "analyze", "apply", "clear"] },
-              skills: {
-                type: "array",
-                items: { type: "string" },
-                description: "For action=apply: the exact skill names to inject into the current project.",
-              },
+              action: { type: "string", enum: ["status", "sync", "analyze"] },
             },
             additionalProperties: false,
           },
@@ -519,20 +514,6 @@ function registerTool(ctx, updater, cfg, warn) {
               }
               if (action === "status") return { report: formatStatus(updater.status()) };
               if (action === "analyze") return { report: formatPanel(buildPanel(ctx, updater, cfg, sessionId)) };
-              if (action === "clear") {
-                const project = resolveProject(ctx, sessionId);
-                if (project.error !== undefined) return { report: `dotnet skills: ${project.error}` };
-                const result = clearProject(project.root);
-                return { report: `removed ${result.pruned} injected skills from ${project.root}` };
-              }
-              if (action === "apply") {
-                const project = resolveProject(ctx, sessionId);
-                if (project.error !== undefined) return { report: `dotnet skills: ${project.error}` };
-                const names = Array.isArray(args?.skills) ? args.skills : [];
-                if (names.length === 0) return { report: "dotnet skills: action=apply needs a non-empty skills list" };
-                const result = injectProject(project.root, names, updater.index());
-                return { report: `injected ${result.injected.length} skills into ${project.root} (${result.copied} written, ${result.pruned} pruned)` };
-              }
               return { report: `unknown action: ${action}` };
             } catch (error) {
               return { report: `dotnet skills: ${String(error?.message ?? error)}` };
@@ -554,43 +535,16 @@ function registerTool(ctx, updater, cfg, warn) {
 }
 
 /* ------------------------------------------------------------------ *
- * model tools: search the catalog, load one skill
+ * model tools: search the catalog, apply a selection to the project
  * ------------------------------------------------------------------ */
 
 const SKILL_NAME = /^[a-z0-9]+(?:-[a-z0-9]+)*$/u;
-const MAX_BODY = 60 * 1024;
-
-function stripFrontmatter(text) {
-  const match = /^---\r?\n[\s\S]*?\r?\n---\r?\n?/u.exec(text);
-  return match === null ? text : text.slice(match[0].length);
-}
-
-function renderSkill(name, file, directory) {
-  let body = "";
-  try {
-    body = readFileSync(file, "utf8");
-  } catch (error) {
-    return { ok: false, error: `could not read ${name}: ${String(error?.message ?? error)}` };
-  }
-  const trimmed = stripFrontmatter(body).trim();
-  const capped = trimmed.length > MAX_BODY ? `${trimmed.slice(0, MAX_BODY)}\n\n[truncated at ${Math.round(MAX_BODY / 1024)} KB]` : trimmed;
-  return {
-    ok: true,
-    report: [
-      `<skill_content name="${name}">`,
-      `Base directory for this skill: ${directory}`,
-      "Resolve relative paths mentioned in the instructions against that directory; load referenced resources only as needed.",
-      "",
-      capped,
-      "</skill_content>",
-    ].join("\n"),
-  };
-}
+const MAX_LISTED = 30;
 
 /**
- * `dotnet_skills_find` lists matches; `dotnet_skills_load` reads one skill.
- * Splitting them keeps the search result small (names + one line) and makes a
- * second, deliberate step out of spending the skill's tokens.
+ * `dotnet_skills_find` lists matches; `dotnet_skills_apply` adds chosen names to
+ * the project. Searching stays a few lines, and spending a skill's tokens is a
+ * deliberate second step that lands in the project catalog.
  */
 function registerFindTools(ctx, updater, warn) {
   try {
@@ -603,7 +557,7 @@ function registerFindTools(ctx, updater, warn) {
           scoped.tools.register({
             name: "dotnet_skills_find",
             description:
-              "Search the cached .NET skill catalog (200+ skills: MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers) and list the matching skills with a one-line description. The catalog is deliberately NOT in this session, so search it for .NET/C# work before answering from memory, then load what you need with dotnet_skills_load.",
+              "Search the cached .NET skill catalog (200+ skills: MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers) and list the matching skills with a one-line description. The catalog is deliberately NOT in this session, so search it for .NET/C# work before answering from memory, then add what you need with dotnet_skills_apply.",
             parameters: {
               type: "object",
               properties: {
@@ -646,15 +600,23 @@ function registerFindTools(ctx, updater, warn) {
 
         disposers.push(
           scoped.tools.register({
-            name: "dotnet_skills_load",
+            name: "dotnet_skills_apply",
             description:
-              "Load one .NET skill's full instructions by exact name. The skill is resolved from the current working directory's project first (skills already injected into `<project>/.dsh/skills`), then from the cached catalog, and the result names the skill's base directory for its references. Search names first with dotnet_skills_find.",
+              "Add .NET skills to the current project so their instructions become available in this project's skill catalog. It appends (it never drops a skill the user injected); `remove` drops specific names. Use it when a task needs deeper .NET/C# guidance than you have: search with dotnet_skills_find, then apply the exact names. The result lists each skill's SKILL.md path for immediate reading, and the skills join the project catalog from the next step.",
             parameters: {
               type: "object",
               properties: {
-                name: { type: "string", description: 'Exact skill name, e.g. "binlog-generation".' },
+                skills: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: 'Skill names to add (kebab-case, from dotnet_skills_find), e.g. ["binlog-generation"].',
+                },
+                remove: {
+                  type: "array",
+                  items: { type: "string" },
+                  description: "Optional skill names to drop from the project injection.",
+                },
               },
-              required: ["name"],
               additionalProperties: false,
             },
             output: {
@@ -670,25 +632,40 @@ function registerFindTools(ctx, updater, warn) {
             },
             async execute(args, exec) {
               try {
-                const name = String(args?.name ?? "").trim();
-                if (!SKILL_NAME.test(name)) {
-                  return { report: `dotnet_skills_load needs an exact kebab-case skill name (got "${name}"). Search with dotnet_skills_find.` };
-                }
                 const project = resolveProject(ctx, exec?.agent?.session?.id);
-                if (project.error === undefined) {
-                  const injected = join(project.root, ".dsh", "skills", name, "SKILL.md");
-                  if (existsSync(injected)) {
-                    const rendered = renderSkill(name, injected, join(project.root, ".dsh", "skills", name));
-                    return { report: rendered.ok ? rendered.report : rendered.error };
-                  }
+                if (project.error !== undefined) return { report: `dotnet_skills_apply: ${project.error}` };
+                const clean = (list) =>
+                  (Array.isArray(list) ? list : [])
+                    .filter((name) => typeof name === "string")
+                    .map((name) => name.trim())
+                    .filter((name) => name !== "");
+                const add = clean(args?.skills);
+                const remove = clean(args?.remove);
+                const invalid = [...add, ...remove].filter((name) => !SKILL_NAME.test(name));
+                if (invalid.length > 0) {
+                  return { report: `invalid skill name(s): ${invalid.join(", ")} — names come from dotnet_skills_find.` };
+                }
+                if (add.length === 0 && remove.length === 0) {
+                  return { report: "dotnet_skills_apply needs `skills` to add and/or `remove` to drop." };
                 }
                 const index = updater.index();
-                const loaded = loadSkill(index, name);
-                if (loaded.ok !== true) return { report: loaded.error };
-                const rendered = renderSkill(name, join(loaded.dir, "SKILL.md"), loaded.dir);
-                return { report: rendered.ok ? rendered.report : rendered.error };
+                const known = new Set(index.skills.map((skill) => skill.name));
+                const unknown = add.filter((name) => !known.has(name));
+                if (unknown.length > 0) {
+                  return { report: `unknown skill(s): ${unknown.join(", ")} — search with dotnet_skills_find first.` };
+                }
+                const result = applyProject(project.root, add, remove, index);
+                const directory = join(project.root, ".dsh", "skills");
+                const lines = [
+                  `project set: ${result.injected.length} skills (${result.added.length} added, ${result.removed.length} removed, ${result.copied} written)`,
+                  "",
+                  ...result.injected.slice(0, MAX_LISTED).map((name) => `- ${name} → ${join(directory, name, "SKILL.md")}`),
+                ];
+                if (result.injected.length > MAX_LISTED) lines.push(`… ${result.injected.length - MAX_LISTED} more`);
+                lines.push("", "Read a listed SKILL.md now for its instructions, or load it with the skill tool once the project catalog refreshes.");
+                return { report: lines.join("\n") };
               } catch (error) {
-                return { report: `dotnet_skills_load: ${String(error?.message ?? error)}` };
+                return { report: `dotnet_skills_apply: ${String(error?.message ?? error)}` };
               }
             },
           }),
@@ -729,9 +706,9 @@ function registerFindTools(ctx, updater, warn) {
 const PROMPT_SECTION = [
   "## .NET skills on demand",
   "A cached catalog of 200+ .NET skills (MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers) is NOT in this session.",
-  "For .NET/C# work, search it with `dotnet_skills_find` before answering from memory, using the concrete framework plus symptom (e.g. \"msbuild binlog\", \"ef core query performance\", \"xunit migration\"), then load the exact skill with `dotnet_skills_load`.",
-  "Apply a loaded skill's instructions; do not paste its body back to the user.",
-  "The composer button (`.net技能`) injects a project-wide selection — that is a human decision: do not call `dotnet_skills` apply or clear unless the user asks for it.",
+  "For .NET/C# work, search it with `dotnet_skills_find` before answering from memory, using the concrete framework plus symptom (e.g. \"msbuild binlog\", \"ef core query performance\", \"xunit migration\"), then add the exact skill with `dotnet_skills_apply`.",
+  "That call appends to the project's injected set — it never removes what the user chose — and returns each skill's SKILL.md path to read; the same skills also join the project catalog from the next step.",
+  "Do this whenever a task needs the depth, even if the user never opened the `.net技能` panel. Remove or clear skills only when the user asks.",
 ].join("\n");
 
 function registerPromptSection(ctx, warn) {

@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, writeFileSync, existsSync, rmSync, readFileSync
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { analyzeProject } from "../lib/detect.js";
-import { injectProject, clearProject, readInjection, skillsDir } from "../lib/inject.js";
+import { applyProject, injectProject, clearProject, readInjection, skillsDir } from "../lib/inject.js";
 
 const root = mkdtempSync(join(tmpdir(), "dsh-dotnet-skills-"));
 try {
@@ -54,6 +54,14 @@ try {
 
   const again = injectProject(root, ["fixture-skill"], index);
   if (again.copied !== 0 || again.unchanged !== 1) throw new Error("re-injection was not incremental");
+
+  // Model-facing apply appends and never drops what was already there.
+  const kept = applyProject(root, [], [], index);
+  if (kept.injected.length !== 1 || kept.added.length !== 0) throw new Error("apply without names disturbed the set");
+  const dropped = applyProject(root, [], ["fixture-skill"], index);
+  if (dropped.injected.length !== 0 || dropped.removed[0] !== "fixture-skill") throw new Error("apply remove did not drop the skill");
+  const restored = applyProject(root, ["fixture-skill"], [], index);
+  if (restored.injected.length !== 1 || restored.added[0] !== "fixture-skill") throw new Error("apply did not append");
 
   clearProject(root);
   if (existsSync(join(skillsDir(root), "fixture-skill"))) throw new Error("clear left the skill behind");
