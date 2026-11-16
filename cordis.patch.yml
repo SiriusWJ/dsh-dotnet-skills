@@ -20,7 +20,7 @@
         startDelaySeconds: 20
         # The composer panel asks the current model to pick skills for the
         # project (facts from files + the catalog). Bounds on that one call:
-        selectMaxSkills: 8
+        selectMaxSkills: 10
         selectTimeoutMs: 45000
         # Git executable; override when `git` is not on the PATH of the DSH process.
         gitCommand: git

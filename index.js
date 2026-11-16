@@ -32,6 +32,12 @@ const APPLY_ROUTE = "/dsh-dotnet-skills/apply";
 const CLEAR_ROUTE = "/dsh-dotnet-skills/clear";
 const GIT_TIMEOUT_MS = 180_000;
 const LOG_LIMIT = 30;
+/** Last panel requests, for diagnosing "I clicked refresh and nothing happened". */
+const recentPanelRequests = [];
+function rememberPanelRequest(entry) {
+  recentPanelRequests.push(entry);
+  if (recentPanelRequests.length > 10) recentPanelRequests.shift();
+}
 
 const DEFAULTS = {
   repoUrl: "https://github.com/managedcode/dotnet-skills.git",
@@ -40,7 +46,7 @@ const DEFAULTS = {
   intervalHours: 6,
   runOnStart: true,
   startDelaySeconds: 20,
-  selectMaxSkills: 8,
+  selectMaxSkills: 10,
   selectTimeoutMs: 45_000,
   gitCommand: "git",
 };
@@ -435,15 +441,26 @@ function registerRoutes(ctx, updater, cfg, warn) {
           path: STATE_ROUTE,
           handler: async (request, response) => {
             const url = new URL(request.url ?? STATE_ROUTE, "http://localhost");
+            const startedAt = Date.now();
+            const refresh = url.searchParams.get("refresh") === "1";
+            const lang = url.searchParams.get("lang") === "zh" ? "zh" : "en";
             let panel;
             try {
-              panel = await buildPanel(ctx, updater, cfg, url.searchParams.get("sessionId"), {
-                refresh: url.searchParams.get("refresh") === "1",
-                lang: url.searchParams.get("lang") === "zh" ? "zh" : "en",
-              });
+              panel = await buildPanel(ctx, updater, cfg, url.searchParams.get("sessionId"), { refresh, lang });
             } catch (error) {
               panel = { ok: false, error: String(error?.message ?? error) };
             }
+            rememberPanelRequest({
+              at: new Date(startedAt).toISOString(),
+              refresh,
+              lang,
+              ms: Date.now() - startedAt,
+              ok: panel.ok === true,
+              source: panel.analysis?.source ?? null,
+              cached: panel.analysis?.cached ?? null,
+              suggested: panel.suggested?.length ?? 0,
+              error: panel.error ?? panel.analysis?.note ?? null,
+            });
             sendJson(response, 200, panel);
           },
         });
@@ -630,6 +647,7 @@ function registerTool(ctx, updater, cfg, warn) {
                       suggested: panel.suggested,
                       reasons: panel.reasons,
                       totals: panel.totals,
+                      recentPanelRequests: recentPanelRequests.slice(-6),
                     },
                     null,
                     2,

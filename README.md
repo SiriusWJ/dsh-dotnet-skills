@@ -31,7 +31,7 @@ The first version mapped project files to catalog packages with a rule table. It
 Two layers, deliberately split:
 
 - **Facts** (local, exact, cheap): target frameworks, `PackageReference`/`PackageVersion` names, project names and counts, and the file mix, gathered from `<project>` with bounded traversal.
-- **Judgement** (one background model call): the facts plus the whole catalog go to the current model, which returns at most `selectMaxSkills` (default 8) skills with a one-line reason each.
+- **Judgement** (one background model call): the facts plus the whole catalog go to the current model, which returns at most `selectMaxSkills` (default 10), most relevant first skills with a one-line reason each.
 
 The panel shows the facts as chips, the model's picks pre-selected with their reasons, and the full catalog for anything else. When the model route is unavailable the panel says so and preselects nothing — it never falls back to a rule table.
 
