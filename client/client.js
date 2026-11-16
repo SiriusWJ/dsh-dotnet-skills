@@ -216,7 +216,8 @@ window.__ModuleLoader__.load({
       'border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));box-shadow:0 24px 80px rgba(0,0,0,.6),0 2px 10px rgba(0,0,0,.4);',
       'overflow:hidden;animation:dsdk-pop .16s cubic-bezier(.2,.8,.3,1)}',
       '.dsdk-head{padding:18px 20px 12px;display:flex;flex-direction:column;gap:7px}',
-      '.dsdk-headrow{display:flex;align-items:center;gap:10px}',
+      '.dsdk-headrow{display:flex;align-items:center;gap:10px;min-width:0}',
+      '.dsdk-headrow>.dsdk-title{flex:0 0 auto}',
       '.dsdk-title{font-size:15.5px;font-weight:650;letter-spacing:.2px;display:flex;align-items:center;gap:9px}',
       '.dsdk-sub{font-size:12px;color:var(--dsw-alias-label-secondary,#98a0aa);word-break:break-all}',
       '.dsdk-close{display:grid;place-items:center;width:26px;height:26px;border:0;border-radius:8px;',
@@ -273,12 +274,12 @@ window.__ModuleLoader__.load({
       'background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3);color:var(--dsw-alias-state-error-primary,#ff6b6b)}',
 
       /* Microsoft Learn control in the panel header (per working directory) */
-      '.dsdk-headright{margin-left:auto;display:flex;align-items:center;gap:10px}',
-      '.dsdk-learn-pill{display:flex;align-items:center;gap:9px;padding:3px 5px 3px 11px;border-radius:999px;',
+      '.dsdk-headright{margin-left:auto;display:flex;align-items:center;gap:10px;flex:0 0 auto}',
+      '.dsdk-learn-pill{display:flex;align-items:center;gap:8px;padding:3px 4px 3px 10px;border-radius:999px;flex:0 0 auto;max-width:100%}',
       'border:1px solid rgba(129,140,248,.32);background:rgba(81,43,212,.14);transition:border-color .15s ease,background-color .15s ease}',
       '.dsdk-learn-pill[data-on="true"]{border-color:rgba(129,140,248,.6);background:rgba(81,43,212,.26)}',
       '.dsdk-learn-label{font-size:11.5px;font-weight:650;letter-spacing:.2px;white-space:nowrap;flex:none}',
-      '.dsdk-learn-state{font-size:11px;color:var(--dsw-alias-label-secondary,#98a0aa);min-width:0;max-width:210px;',
+      '.dsdk-learn-state{font-size:11px;color:var(--dsw-alias-label-secondary,#98a0aa);min-width:0;max-width:110px;flex:0 1 auto;',
       'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
 
       /* settings card (Plugins → Installed) */
@@ -305,14 +306,14 @@ window.__ModuleLoader__.load({
       'font-size:12.5px;font-weight:600;cursor:pointer}',
       '.dsdk-cfg-save:disabled{opacity:.45;cursor:default}',
       'background:transparent;color:inherit;font:inherit;font-size:12.5px;cursor:pointer}',
-      '.dsdk-switch{position:relative;display:inline-flex;align-items:center;width:46px;height:26px;border-radius:999px;',
+      '.dsdk-switch{position:relative;display:inline-flex;align-items:center;width:42px;height:24px;border-radius:999px;flex:0 0 auto;',
       'border:1px solid rgba(255,255,255,.3);box-sizing:border-box;padding:0;cursor:pointer;flex:none;',
       'background:rgba(255,255,255,.16);box-shadow:inset 0 1px 2px rgba(0,0,0,.35);transition:background-color .15s ease,border-color .15s ease}',
       '.dsdk-switch:hover:not(:disabled){border-color:rgba(255,255,255,.5)}',
       '.dsdk-switch[data-on="true"]{background:' + BRAND + ';border-color:' + BRAND + '}',
-      '.dsdk-switch span{position:absolute;top:3px;left:3px;width:18px;height:18px;border-radius:999px;background:#fff;',
+      '.dsdk-switch span{position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:999px;background:#fff;',
       'box-shadow:0 1px 3px rgba(0,0,0,.45);transition:transform .16s ease}',
-      '.dsdk-switch[data-on="true"] span{transform:translateX(20px)}',
+      '.dsdk-switch[data-on="true"] span{transform:translateX(18px)}',
       '.dsdk-switch:disabled{opacity:.45;cursor:default}',
 
       '@keyframes dsdk-rotate{to{transform:rotate(360deg)}}',
