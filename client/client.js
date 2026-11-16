@@ -1,12 +1,14 @@
 /**
  * dsh-dotnet-skills — Client half.
  *
- * One registration: a composer button in `conversation.input.left`. Clicking it
- * analyses the current project (host route) and opens a searchable panel with
- * the suggested skills. The dialog renders from this same component as a
- * fixed-position layer — the sibling screenshot plugin proves fixed children
- * escape the docked composer, while a second shell.overlay registration stayed
- * inactive in this host.
+ * Two registrations, one tiny store:
+ *   conversation.input.left → the composer button (`dotnet技能`, with a count badge)
+ *   shell.overlay           → the dialog layer (frame-wide, above every column)
+ *
+ * The dialog lives in shell.overlay rather than inside the composer: a fixed
+ * child of the docked composer is positioned against its transformed ancestor
+ * and lands on top of the input. The overlay occupant always renders a wrapper,
+ * so the cell stays active even while the dialog is closed.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-dotnet-skills',
@@ -17,6 +19,30 @@ window.__ModuleLoader__.load({
     const STATE_ENDPOINT = '/dsh-dotnet-skills/state'
     const APPLY_ENDPOINT = '/dsh-dotnet-skills/apply'
     const CLEAR_ENDPOINT = '/dsh-dotnet-skills/clear'
+    const BRAND = '#512bd4'
+
+    /** Panel state shared by the composer button and the overlay dialog. */
+    const store = {
+      open: false,
+      sessionId: null,
+      revision: 0,
+      listeners: new Set(),
+      patch(partial) {
+        Object.assign(this, partial)
+        this.revision += 1
+        for (const listener of [...this.listeners]) {
+          try {
+            listener(this.revision)
+          } catch {
+            /* one broken listener must not break the panel */
+          }
+        }
+      },
+      subscribe(listener) {
+        this.listeners.add(listener)
+        return () => this.listeners.delete(listener)
+      },
+    }
 
     const STRINGS = {
       zh: {
@@ -33,7 +59,8 @@ window.__ModuleLoader__.load({
         cancel: '取消',
         empty: '没有匹配的技能',
         error: '出错了：',
-        confirmHint: '写入 <项目>/.dsh/skills，仅本项目会话可见',
+        suggestedTag: '建议',
+        confirmHint: '写入 <项目>/.dsh/skills · 仅本项目会话可见',
       },
       en: {
         button: 'dotnet skills',
@@ -49,7 +76,8 @@ window.__ModuleLoader__.load({
         cancel: 'Cancel',
         empty: 'No matching skill',
         error: 'Failed: ',
-        confirmHint: 'Writes <project>/.dsh/skills — only sessions in this project see them',
+        suggestedTag: 'suggested',
+        confirmHint: 'Writes <project>/.dsh/skills · only sessions in this project see them',
       },
     }
 
@@ -59,51 +87,75 @@ window.__ModuleLoader__.load({
     }
 
     const CSS = [
+      /* composer button */
       '.dsdk-root{position:relative;display:inline-flex;align-items:center}',
-      '.dsdk-btn{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 8px;border:0;border-radius:999px;',
+      '.dsdk-btn{display:inline-flex;align-items:center;gap:7px;height:26px;padding:0 9px 0 6px;border:0;border-radius:999px;',
       'background:transparent;color:var(--dsw-alias-label-secondary,#8a8f98);cursor:pointer;flex:none;',
-      'font:inherit;font-size:12px;line-height:1;transition:background-color .15s ease,color .15s ease}',
+      'font:inherit;font-size:12.5px;line-height:1;transition:background-color .15s ease,color .15s ease}',
       '.dsdk-btn:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.18));color:var(--dsw-alias-label-primary,#e6e8ea)}',
-      '.dsdk-btn:focus-visible{outline:2px solid #512bd4;outline-offset:2px}',
+      '.dsdk-btn:focus-visible{outline:2px solid ' + BRAND + ';outline-offset:2px}',
       '.dsdk-btn[data-active="true"]{color:var(--dsw-alias-label-primary,#e6e8ea)}',
       '.dsdk-count{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 4px;',
-      'border-radius:999px;background:#512bd4;color:#fff;font-size:10px;font-weight:700}',
-      '.dsdk-backdrop{position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;',
-      'animation:dsdk-fade .12s ease-out}',
-      '.dsdk-panel{width:min(680px,92vw);max-height:min(76vh,720px);display:flex;flex-direction:column;border-radius:14px;',
-      'background:var(--dsw-alias-bg-overlay,#1b1f26);color:var(--dsw-alias-label-primary,#e6e8ea);',
-      'border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.12));box-shadow:0 18px 60px rgba(0,0,0,.45);overflow:hidden}',
-      '.dsdk-head{padding:14px 18px 8px;display:flex;flex-direction:column;gap:6px}',
-      '.dsdk-title{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}',
-      '.dsdk-sub{font-size:12px;color:var(--dsw-alias-label-secondary,#9aa0a8);word-break:break-all}',
-      '.dsdk-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}',
-      '.dsdk-chip{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.16));',
-      'color:var(--dsw-alias-label-secondary,#a7adb6)}',
-      '.dsdk-search{margin:6px 18px 8px;display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:9px;',
-      'background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.1));border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.1))}',
+      'border-radius:999px;background:' + BRAND + ';color:#fff;font-size:10px;font-weight:700;font-variant-numeric:tabular-nums}',
+
+      /* dialog */
+      '.dsdk-layer{position:fixed;inset:0;z-index:1400;pointer-events:auto;display:flex;align-items:center;justify-content:center;',
+      'background:rgba(6,8,12,.58);backdrop-filter:blur(3px);-webkit-backdrop-filter:blur(3px);animation:dsdk-fade .14s ease-out}',
+      '.dsdk-panel{width:min(720px,92vw);max-height:min(78vh,760px);display:flex;flex-direction:column;border-radius:16px;',
+      'background:var(--dsw-alias-bg-overlay,#1b1f27);color:var(--dsw-alias-label-primary,#e9ebee);',
+      'border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.1));box-shadow:0 24px 80px rgba(0,0,0,.55),0 2px 8px rgba(0,0,0,.35);',
+      'overflow:hidden;animation:dsdk-pop .16s cubic-bezier(.2,.8,.3,1)}',
+      '.dsdk-head{padding:18px 20px 12px;display:flex;flex-direction:column;gap:7px}',
+      '.dsdk-headrow{display:flex;align-items:flex-start;gap:10px}',
+      '.dsdk-title{font-size:15.5px;font-weight:650;letter-spacing:.2px;display:flex;align-items:center;gap:9px}',
+      '.dsdk-sub{font-size:12px;color:var(--dsw-alias-label-secondary,#98a0aa);word-break:break-all}',
+      '.dsdk-close{margin-left:auto;display:grid;place-items:center;width:26px;height:26px;border:0;border-radius:8px;',
+      'background:transparent;color:var(--dsw-alias-label-secondary,#98a0aa);cursor:pointer}',
+      '.dsdk-close:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.18));color:var(--dsw-alias-label-primary,#e9ebee)}',
+      '.dsdk-chips{display:flex;flex-wrap:wrap;gap:6px;padding:0 20px 4px}',
+      '.dsdk-chip{font-size:11px;line-height:18px;padding:1px 9px;border-radius:999px;',
+      'background:rgba(129,140,248,.16);color:var(--dsw-alias-label-primary,#cfd4dc);border:1px solid rgba(129,140,248,.28)}',
+      '.dsdk-chip-label{background:transparent;border-color:transparent;color:var(--dsw-alias-label-secondary,#98a0aa);padding-left:0}',
+      '.dsdk-search{margin:8px 20px 10px;display:flex;align-items:center;gap:8px;padding:8px 12px;border-radius:10px;',
+      'background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.1));border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.1));',
+      'transition:border-color .15s ease,box-shadow .15s ease}',
+      '.dsdk-search:focus-within{border-color:rgba(129,140,248,.55);box-shadow:0 0 0 3px rgba(81,43,212,.18)}',
       '.dsdk-search input{flex:1;border:0;background:transparent;color:inherit;font:inherit;font-size:13px;outline:none}',
-      '.dsdk-list{flex:1;overflow:auto;padding:4px 10px 8px}',
-      '.dsdk-row{display:flex;gap:10px;align-items:flex-start;padding:7px 8px;border-radius:8px;cursor:pointer}',
-      '.dsdk-row:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.12))}',
-      '.dsdk-row input{margin-top:3px;accent-color:#512bd4}',
-      '.dsdk-meta{font-size:11px;color:var(--dsw-alias-label-secondary,#7f858e);margin-top:1px}',
-      '.dsdk-desc{font-size:12px;color:var(--dsw-alias-label-secondary,#a7adb6);margin-top:2px;',
+      '.dsdk-search input::placeholder{color:var(--dsw-alias-label-secondary,#8b929b)}',
+      '.dsdk-list{flex:1;overflow:auto;padding:2px 12px 10px}',
+      '.dsdk-list::-webkit-scrollbar{width:8px}',
+      '.dsdk-list::-webkit-scrollbar-thumb{background:rgba(127,127,127,.28);border-radius:999px}',
+      '.dsdk-row{display:flex;gap:11px;align-items:flex-start;padding:9px 10px;border-radius:10px;cursor:pointer;',
+      'border:1px solid transparent;transition:background-color .12s ease,border-color .12s ease}',
+      '.dsdk-row:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.13));border-color:var(--dsw-alias-border-l1,rgba(255,255,255,.08))}',
+      '.dsdk-row[data-checked="true"]{background:rgba(81,43,212,.12);border-color:rgba(129,140,248,.32)}',
+      '.dsdk-row input{margin-top:3px;accent-color:' + BRAND + ';width:14px;height:14px;flex:none}',
+      '.dsdk-name{font-size:13px;font-weight:550}',
+      '.dsdk-tag{font-size:10px;font-weight:600;letter-spacing:.4px;padding:1px 6px;border-radius:6px;margin-left:8px;',
+      'background:rgba(129,140,248,.2);color:#c7c9ff;text-transform:uppercase}',
+      '.dsdk-meta{font-size:11px;color:var(--dsw-alias-label-secondary,#8b929b);margin-top:2px}',
+      '.dsdk-desc{font-size:12px;color:var(--dsw-alias-label-secondary,#a3aab4);margin-top:3px;line-height:1.45;',
       'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
-      '.dsdk-foot{display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.1))}',
+      '.dsdk-foot{display:flex;align-items:center;gap:10px;padding:13px 20px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));',
+      'background:var(--dsw-alias-bg-layer-1,rgba(255,255,255,.02))}',
       '.dsdk-grow{flex:1}',
-      '.dsdk-hint{font-size:11px;color:var(--dsw-alias-label-secondary,#7f858e)}',
-      '.dsdk-act{height:30px;padding:0 14px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.18));',
-      'background:transparent;color:inherit;font:inherit;font-size:12.5px;cursor:pointer}',
-      '.dsdk-act:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.16))}',
-      '.dsdk-act[data-primary="true"]{background:#512bd4;border-color:transparent;color:#fff;font-weight:600}',
-      '.dsdk-act[data-primary="true"]:hover:not(:disabled){filter:brightness(1.1)}',
-      '.dsdk-act:disabled{opacity:.5;cursor:default}',
-      '.dsdk-loading{display:flex;flex-direction:column;align-items:center;gap:12px;padding:46px 20px}',
-      '.dsdk-spin{width:26px;height:26px;border-radius:999px;border:2px solid var(--dsw-alias-border-l2,rgba(255,255,255,.2));',
-      'border-top-color:#512bd4;animation:dsdk-rotate .8s linear infinite}',
-      '.dsdk-error{color:var(--dsw-alias-state-error-primary,#ff6b6b);font-size:12.5px;padding:12px 18px}',
+      '.dsdk-hint{font-size:11.5px;color:var(--dsw-alias-label-secondary,#8b929b)}',
+      '.dsdk-tokens{font-variant-numeric:tabular-nums}',
+      '.dsdk-act{height:31px;padding:0 15px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.16));',
+      'background:transparent;color:inherit;font:inherit;font-size:12.5px;cursor:pointer;transition:background-color .15s ease,filter .15s ease}',
+      '.dsdk-act:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.18))}',
+      '.dsdk-act[data-primary="true"]{background:' + BRAND + ';border-color:transparent;color:#fff;font-weight:600}',
+      '.dsdk-act[data-primary="true"]:hover:not(:disabled){filter:brightness(1.12)}',
+      '.dsdk-act[data-danger="true"]:hover:not(:disabled){color:var(--dsw-alias-state-error-primary,#ff6b6b)}',
+      '.dsdk-act:disabled{opacity:.45;cursor:default}',
+      '.dsdk-loading{display:flex;flex-direction:column;align-items:center;gap:14px;padding:54px 20px}',
+      '.dsdk-spin{width:28px;height:28px;border-radius:999px;border:2.5px solid var(--dsw-alias-border-l2,rgba(255,255,255,.2));',
+      'border-top-color:' + BRAND + ';animation:dsdk-rotate .8s linear infinite}',
+      '.dsdk-error{margin:14px 20px 18px;padding:12px 14px;border-radius:10px;font-size:12.5px;line-height:1.5;',
+      'background:rgba(255,107,107,.1);border:1px solid rgba(255,107,107,.3);color:var(--dsw-alias-state-error-primary,#ff6b6b)}',
       '@keyframes dsdk-rotate{to{transform:rotate(360deg)}}',
       '@keyframes dsdk-fade{from{opacity:0}to{opacity:1}}',
+      '@keyframes dsdk-pop{from{opacity:0;transform:translateY(6px) scale(.985)}to{opacity:1;transform:none}}',
     ].join('')
 
     function installStyles() {
@@ -124,7 +176,7 @@ window.__ModuleLoader__.load({
       return h(
         'svg',
         { viewBox: '0 0 16 16', width: size, height: size, 'aria-hidden': true, style: { display: 'block' } },
-        h('rect', { x: 0.5, y: 0.5, width: 15, height: 15, rx: 4.4, fill: '#512BD4' }),
+        h('rect', { x: 0.5, y: 0.5, width: 15, height: 15, rx: 4.4, fill: BRAND }),
         h('path', {
           d: 'M5.1 11.4V4.6L10.9 11.4V4.6',
           fill: 'none',
@@ -133,6 +185,14 @@ window.__ModuleLoader__.load({
           strokeLinecap: 'round',
           strokeLinejoin: 'round',
         }),
+      )
+    }
+
+    function IconClose() {
+      return h(
+        'svg',
+        { viewBox: '0 0 16 16', width: 14, height: 14, fill: 'none', 'aria-hidden': true },
+        h('path', { d: 'M4.2 4.2l7.6 7.6M11.8 4.2l-7.6 7.6', stroke: 'currentColor', strokeWidth: 1.5, strokeLinecap: 'round' }),
       )
     }
 
@@ -157,83 +217,128 @@ window.__ModuleLoader__.load({
       return payload
     }
 
+    /* ---------------------------------------------------------------- *
+     * composer button
+     * ---------------------------------------------------------------- */
+
     function ComposerButton(props) {
       const sessionId = props && props.sessionId ? props.sessionId : null
       const strings = t()
-      const [open, setOpen] = React.useState(false)
-      const [phase, setPhase] = React.useState('idle') // idle | loading | ready | error
-      const [panel, setPanel] = React.useState(null)
-      const [error, setError] = React.useState('')
       const [count, setCount] = React.useState(0)
-      const [query, setQuery] = React.useState('')
-      const [selection, setSelection] = React.useState([])
-      const [busy, setBusy] = React.useState(false)
-      const searchRef = React.useRef(null)
+      const [revision, bump] = React.useState(0)
 
-      const applyPanel = React.useCallback((payload) => {
-        setPanel(payload)
-        setSelection(payload.injected.length > 0 ? payload.injected : payload.suggested)
-        setCount(payload.injected.length)
-      }, [])
+      React.useEffect(() => store.subscribe(() => bump((value) => value + 1)), [])
 
-      // Initial badge: how many skills this project already has.
       React.useEffect(() => {
         let cancelled = false
         if (sessionId === null) return undefined
         request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}`)
           .then((payload) => {
             if (cancelled || payload === null || payload.ok !== true) return
-            setPanel(payload)
             setCount(payload.injected.length)
           })
           .catch(() => {
-            /* the panel reports the real error when opened */
+            /* the dialog reports the real error when opened */
           })
         return () => {
           cancelled = true
         }
-      }, [sessionId])
+      }, [sessionId, revision, store.open])
+
+      return h(
+        'div',
+        { className: 'dsdk-root' },
+        h(
+          'button',
+          {
+            type: 'button',
+            className: 'dsdk-btn',
+            title: strings.buttonTitle,
+            'aria-label': strings.buttonTitle,
+            'aria-expanded': store.open ? 'true' : 'false',
+            'data-active': count > 0 ? 'true' : 'false',
+            onClick: () => store.patch({ open: !store.open, sessionId }),
+          },
+          h(IconDotnet),
+          h('span', null, strings.button),
+          count > 0 ? h('span', { className: 'dsdk-count' }, String(count)) : null,
+        ),
+      )
+    }
+
+    /* ---------------------------------------------------------------- *
+     * overlay dialog
+     * ---------------------------------------------------------------- */
+
+    function Dialog() {
+      const strings = t()
+      const [revision, bump] = React.useState(0)
+      const [phase, setPhase] = React.useState('idle') // idle | loading | ready | error
+      const [panel, setPanel] = React.useState(null)
+      const [error, setError] = React.useState('')
+      const [query, setQuery] = React.useState('')
+      const [selection, setSelection] = React.useState([])
+      const [busy, setBusy] = React.useState(false)
+      const searchRef = React.useRef(null)
+
+      React.useEffect(() => store.subscribe(() => bump((value) => value + 1)), [])
+
+      const open = store.open === true
+      const sessionId = store.sessionId
+
+      const applyPanel = React.useCallback((payload) => {
+        setPanel(payload)
+        setSelection(payload.injected.length > 0 ? payload.injected : payload.suggested)
+      }, [])
+
+      React.useEffect(() => {
+        if (!open) return undefined
+        let cancelled = false
+        setPhase('loading')
+        setError('')
+        setQuery('')
+        if (sessionId === null || sessionId === undefined) {
+          setError('no live session id was passed to the panel')
+          setPhase('error')
+          return undefined
+        }
+        request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}`)
+          .then((payload) => {
+            if (cancelled) return
+            if (payload === null || payload.ok !== true) throw new Error(payload?.error ?? 'no panel data')
+            applyPanel(payload)
+            setPhase('ready')
+            window.setTimeout(() => searchRef.current?.focus(), 40)
+          })
+          .catch((failure) => {
+            if (cancelled) return
+            setError(failure && failure.message ? failure.message : String(failure))
+            setPhase('error')
+          })
+        return () => {
+          cancelled = true
+        }
+      }, [open, sessionId, applyPanel])
 
       React.useEffect(() => {
         if (!open) return undefined
         const onKey = (event) => {
-          if (event.key === 'Escape') setOpen(false)
+          if (event.key === 'Escape') store.patch({ open: false })
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
       }, [open])
 
-      const openPanel = React.useCallback(async () => {
-        setOpen(true)
-        setPhase(panel !== null ? 'ready' : 'loading')
-        setError('')
-        if (sessionId === null) {
-          setError('this session has no id')
-          setPhase('error')
-          return
-        }
-        setPhase('loading')
-        try {
-          const payload = await request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}`)
-          if (payload === null || payload.ok !== true) throw new Error(payload?.error ?? 'no panel data')
-          applyPanel(payload)
-          setQuery('')
-          setPhase('ready')
-          window.setTimeout(() => searchRef.current?.focus(), 30)
-        } catch (failure) {
-          setError(failure && failure.message ? failure.message : String(failure))
-          setPhase('error')
-        }
-      }, [sessionId, panel, applyPanel])
+      const close = () => store.patch({ open: false })
 
-      const submit = React.useCallback(async () => {
+      const submit = async () => {
         if (busy) return
         setBusy(true)
         try {
           const result = await request(APPLY_ENDPOINT, { sessionId, skills: selection })
           if (result && result.ok === true && result.panel) {
             applyPanel(result.panel)
-            setOpen(false)
+            store.patch({ open: false })
           } else {
             throw new Error(result?.error ?? 'apply failed')
           }
@@ -243,9 +348,9 @@ window.__ModuleLoader__.load({
         } finally {
           setBusy(false)
         }
-      }, [busy, sessionId, selection, applyPanel])
+      }
 
-      const clear = React.useCallback(async () => {
+      const clear = async () => {
         if (busy) return
         setBusy(true)
         try {
@@ -253,7 +358,7 @@ window.__ModuleLoader__.load({
           if (result && result.ok === true && result.panel) {
             applyPanel(result.panel)
             setSelection([])
-            setOpen(false)
+            store.patch({ open: false })
           } else {
             throw new Error(result?.error ?? 'clear failed')
           }
@@ -263,7 +368,7 @@ window.__ModuleLoader__.load({
         } finally {
           setBusy(false)
         }
-      }, [busy, sessionId, applyPanel])
+      }
 
       const selectedSet = new Set(selection)
       const toggle = (name) => {
@@ -289,40 +394,49 @@ window.__ModuleLoader__.load({
       const chosenTokens =
         panel === null ? 0 : selection.reduce((sum, name) => sum + (panel.catalog.find((skill) => skill.name === name)?.tokens ?? 0), 0)
 
-      const dialog = !open
-        ? null
-        : h(
-            'div',
-            {
-              className: 'dsdk-backdrop',
-              onMouseDown: (event) => {
-                if (event.target === event.currentTarget) setOpen(false)
-              },
-            },
-            h(
+      // The wrapper always renders: an empty cell would report itself inactive.
+      return h(
+        'div',
+        { className: 'dsdk-root', 'data-open': open ? 'true' : 'false' },
+        open
+          ? h(
               'div',
-              { className: 'dsdk-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': strings.title },
+              {
+                className: 'dsdk-layer',
+                onMouseDown: (event) => {
+                  if (event.target === event.currentTarget) close()
+                },
+              },
               h(
                 'div',
-                { className: 'dsdk-head' },
-                h('div', { className: 'dsdk-title' }, h(IconDotnet), h('span', null, strings.title), h('span', { className: 'dsdk-grow' })),
-                panel && panel.project ? h('div', { className: 'dsdk-sub' }, `${panel.project.name} — ${panel.project.root}`) : null,
+                { className: 'dsdk-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': strings.title },
+                h(
+                  'div',
+                  { className: 'dsdk-head' },
+                  h(
+                    'div',
+                    { className: 'dsdk-headrow' },
+                    h('div', { className: 'dsdk-title' }, h(IconDotnet, { size: 18 }), h('span', null, strings.title)),
+                    h('button', { type: 'button', className: 'dsdk-close', onClick: close, title: strings.cancel, 'aria-label': strings.cancel }, h(IconClose)),
+                  ),
+                  panel && panel.project ? h('div', { className: 'dsdk-sub' }, `${panel.project.name} — ${panel.project.root}`) : null,
+                ),
                 panel && phase === 'ready'
                   ? h(
                       'div',
                       { className: 'dsdk-chips' },
-                      h('span', { className: 'dsdk-chip' }, `${strings.detected}:`),
+                      h('span', { className: 'dsdk-chip dsdk-chip-label' }, `${strings.detected}:`),
                       panel.detected.signals.length === 0
                         ? h('span', { className: 'dsdk-chip' }, strings.nothing)
                         : panel.detected.signals.map((signal) => h('span', { className: 'dsdk-chip', key: signal.id }, signal.label)),
                     )
                   : null,
-              ),
-              phase === 'loading'
-                ? h('div', { className: 'dsdk-loading' }, h('div', { className: 'dsdk-spin' }), h('div', { className: 'dsdk-hint' }, strings.analysing))
-                : phase === 'error'
-                  ? h('div', { className: 'dsdk-error' }, `${strings.error}${error}`)
-                  : h(
+                phase === 'loading'
+                  ? h('div', { className: 'dsdk-loading' }, h('div', { className: 'dsdk-spin' }), h('div', { className: 'dsdk-hint' }, strings.analysing))
+                  : null,
+                phase === 'error' ? h('div', { className: 'dsdk-error' }, `${strings.error}${error}`) : null,
+                phase === 'ready'
+                  ? h(
                       'div',
                       { style: { display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 } },
                       h(
@@ -340,17 +454,27 @@ window.__ModuleLoader__.load({
                         'div',
                         { className: 'dsdk-list' },
                         rows.length === 0
-                          ? h('div', { className: 'dsdk-hint', style: { padding: '18px' } }, strings.empty)
+                          ? h('div', { className: 'dsdk-hint', style: { padding: '26px 10px', textAlign: 'center' } }, strings.empty)
                           : rows.map((skill) =>
                               h(
                                 'label',
-                                { className: 'dsdk-row', key: skill.name },
-                                h('input', { type: 'checkbox', checked: selectedSet.has(skill.name), onChange: () => toggle(skill.name) }),
+                                { className: 'dsdk-row', key: skill.name, 'data-checked': selectedSet.has(skill.name) ? 'true' : 'false' },
+                                h('input', {
+                                  type: 'checkbox',
+                                  checked: selectedSet.has(skill.name),
+                                  onChange: () => toggle(skill.name),
+                                  'aria-label': skill.name,
+                                }),
                                 h(
                                   'span',
                                   { style: { minWidth: 0 } },
-                                  h('span', { style: { fontSize: '13px' } }, skill.name),
-                                  h('span', { className: 'dsdk-meta' }, ` · ${skill.package} · ≈${skill.tokens} tok`),
+                                  h(
+                                    'span',
+                                    { className: 'dsdk-name' },
+                                    skill.name,
+                                    skill.suggested ? h('span', { className: 'dsdk-tag' }, strings.suggestedTag) : null,
+                                  ),
+                                  h('span', { className: 'dsdk-meta' }, `${skill.package} · ≈${skill.tokens} tok`),
                                   skill.description ? h('span', { className: 'dsdk-desc' }, skill.description) : null,
                                 ),
                               ),
@@ -359,43 +483,44 @@ window.__ModuleLoader__.load({
                       h(
                         'div',
                         { className: 'dsdk-foot' },
-                        h('span', { className: 'dsdk-hint' }, `${strings.selected} ${selection.length} · ≈${chosenTokens} tok`),
+                        h(
+                          'span',
+                          { className: 'dsdk-hint dsdk-tokens' },
+                          `${strings.selected} ${selection.length} · ≈${chosenTokens} tok`,
+                        ),
                         h('span', { className: 'dsdk-grow' }),
                         h('span', { className: 'dsdk-hint' }, strings.confirmHint),
                         h(
                           'button',
-                          { type: 'button', className: 'dsdk-act', onClick: clear, disabled: busy || (panel ? panel.injected.length === 0 : true) },
+                          {
+                            type: 'button',
+                            className: 'dsdk-act',
+                            'data-danger': 'true',
+                            onClick: clear,
+                            disabled: busy || (panel ? panel.injected.length === 0 : true),
+                          },
                           strings.clear,
                         ),
-                        h('button', { type: 'button', className: 'dsdk-act', onClick: () => setOpen(false), disabled: busy }, strings.cancel),
+                        h('button', { type: 'button', className: 'dsdk-act', onClick: close, disabled: busy }, strings.cancel),
                         h(
                           'button',
                           { type: 'button', className: 'dsdk-act', 'data-primary': 'true', onClick: submit, disabled: busy },
                           `${strings.inject} ${selection.length}`,
                         ),
                       ),
-                    ),
-            ),
-          )
-
-      return h(
-        'div',
-        { className: 'dsdk-root' },
-        h(
-          'button',
-          {
-            type: 'button',
-            className: 'dsdk-btn',
-            title: strings.buttonTitle,
-            'aria-label': strings.buttonTitle,
-            'data-active': count > 0 ? 'true' : 'false',
-            onClick: openPanel,
-          },
-          h(IconDotnet),
-          h('span', null, strings.button),
-          count > 0 ? h('span', { className: 'dsdk-count' }, String(count)) : null,
-        ),
-        dialog,
+                    )
+                  : null,
+                phase === 'error'
+                  ? h(
+                      'div',
+                      { className: 'dsdk-foot' },
+                      h('span', { className: 'dsdk-grow' }),
+                      h('button', { type: 'button', className: 'dsdk-act', onClick: close }, strings.cancel),
+                    )
+                  : null,
+              ),
+            )
+          : null,
       )
     }
 
@@ -412,6 +537,16 @@ window.__ModuleLoader__.load({
               label: () => t().button,
             },
             ComposerButton,
+          ),
+        )
+        ctx.slots.inject('shell.overlay', () =>
+          ctx.slots.register(
+            {
+              name: 'shell.overlay',
+              id: 'dsh-dotnet-skills.dialog',
+              order: 900,
+            },
+            Dialog,
           ),
         )
       },
