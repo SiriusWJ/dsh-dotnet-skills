@@ -1,14 +1,12 @@
 /**
  * dsh-dotnet-skills — Client half.
  *
- * Two registrations, one shared store:
- *   conversation.input.left → the composer button (`技能`, with an injected count)
- *   shell.overlay           → the panel: analyse → searchable skill list → apply
- *
- * Clicking the button opens the panel in the frame-wide overlay seat (the docked
- * composer clips fixed children, and the slot's own documentation points overlays
- * here). The host analyses the project on every open, so the panel shows what it
- * actually recognised instead of a guess made when the plugin mounted.
+ * One registration: a composer button in `conversation.input.left`. Clicking it
+ * analyses the current project (host route) and opens a searchable panel with
+ * the suggested skills. The dialog renders from this same component as a
+ * fixed-position layer — the sibling screenshot plugin proves fixed children
+ * escape the docked composer, while a second shell.overlay registration stayed
+ * inactive in this host.
  */
 window.__ModuleLoader__.load({
   id: 'dsh-dotnet-skills',
@@ -19,32 +17,6 @@ window.__ModuleLoader__.load({
     const STATE_ENDPOINT = '/dsh-dotnet-skills/state'
     const APPLY_ENDPOINT = '/dsh-dotnet-skills/apply'
     const CLEAR_ENDPOINT = '/dsh-dotnet-skills/clear'
-
-    /** Shared panel state between the composer button and the overlay seat. */
-    const store = {
-      open: false,
-      sessionId: null,
-      revision: 0,
-      listeners: new Set(),
-      emit() {
-        for (const listener of [...this.listeners]) {
-          try {
-            listener(this.revision)
-          } catch {
-            /* a broken listener must not break the panel */
-          }
-        }
-      },
-      patch(partial) {
-        Object.assign(this, partial)
-        this.revision += 1
-        this.emit()
-      },
-      subscribe(listener) {
-        this.listeners.add(listener)
-        return () => this.listeners.delete(listener)
-      },
-    }
 
     const STRINGS = {
       zh: {
@@ -61,10 +33,7 @@ window.__ModuleLoader__.load({
         cancel: '取消',
         empty: '没有匹配的技能',
         error: '出错了：',
-        live: '已注入',
-        all: '全部技能',
-        suggested: '建议',
-        confirmHint: '确认后写入 <项目>/.dsh/skills，仅本项目会话可见',
+        confirmHint: '写入 <项目>/.dsh/skills，仅本项目会话可见',
       },
       en: {
         button: 'dotnet skills',
@@ -80,9 +49,6 @@ window.__ModuleLoader__.load({
         cancel: 'Cancel',
         empty: 'No matching skill',
         error: 'Failed: ',
-        live: 'injected',
-        all: 'All skills',
-        suggested: 'Suggested',
         confirmHint: 'Writes <project>/.dsh/skills — only sessions in this project see them',
       },
     }
@@ -97,48 +63,45 @@ window.__ModuleLoader__.load({
       '.dsdk-btn{display:inline-flex;align-items:center;gap:6px;height:26px;padding:0 8px;border:0;border-radius:999px;',
       'background:transparent;color:var(--dsw-alias-label-secondary,#8a8f98);cursor:pointer;flex:none;',
       'font:inherit;font-size:12px;line-height:1;transition:background-color .15s ease,color .15s ease}',
-      '.dsdk-btn:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.16));color:var(--dsw-alias-label-primary,#e6e8ea)}',
-      '.dsdk-btn:active:not(:disabled){background:var(--dsw-alias-interactive-bg-pressed,rgba(127,127,127,.26))}',
-      '.dsdk-btn:disabled{opacity:.45;cursor:default}',
-      '.dsdk-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#3b82f6);outline-offset:2px}',
+      '.dsdk-btn:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.18));color:var(--dsw-alias-label-primary,#e6e8ea)}',
+      '.dsdk-btn:focus-visible{outline:2px solid #512bd4;outline-offset:2px}',
       '.dsdk-btn[data-active="true"]{color:var(--dsw-alias-label-primary,#e6e8ea)}',
-      '.dsdk-count{display:inline-flex;align-items:center;justify-content:center;min-width:16px;height:16px;padding:0 4px;',
-      'border-radius:999px;background:var(--dsw-alias-brand-primary,#3b82f6);color:#fff;font-size:10px;font-weight:600}',
-      '.dsdk-dot{width:5px;height:5px;border-radius:999px;background:var(--dsw-alias-state-success-primary,#22c55e)}',
-      '.dsdk-backdrop{position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.42);display:flex;align-items:center;justify-content:center;',
-      'pointer-events:auto;animation:dsdk-fade .12s ease-out}',
-      '.dsdk-panel{width:min(660px,92vw);max-height:min(76vh,720px);display:flex;flex-direction:column;border-radius:14px;',
-      'background:var(--dsw-alias-bg-elevated,#1b1f26);color:var(--dsw-alias-label-primary,#e6e8ea);',
+      '.dsdk-count{display:inline-flex;align-items:center;justify-content:center;min-width:17px;height:17px;padding:0 4px;',
+      'border-radius:999px;background:#512bd4;color:#fff;font-size:10px;font-weight:700}',
+      '.dsdk-backdrop{position:fixed;inset:0;z-index:1200;background:rgba(0,0,0,.45);display:flex;align-items:center;justify-content:center;',
+      'animation:dsdk-fade .12s ease-out}',
+      '.dsdk-panel{width:min(680px,92vw);max-height:min(76vh,720px);display:flex;flex-direction:column;border-radius:14px;',
+      'background:var(--dsw-alias-bg-overlay,#1b1f26);color:var(--dsw-alias-label-primary,#e6e8ea);',
       'border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.12));box-shadow:0 18px 60px rgba(0,0,0,.45);overflow:hidden}',
-      '.dsdk-head{padding:16px 18px 10px;display:flex;flex-direction:column;gap:6px}',
+      '.dsdk-head{padding:14px 18px 8px;display:flex;flex-direction:column;gap:6px}',
       '.dsdk-title{font-size:15px;font-weight:600;display:flex;align-items:center;gap:8px}',
       '.dsdk-sub{font-size:12px;color:var(--dsw-alias-label-secondary,#9aa0a8);word-break:break-all}',
       '.dsdk-chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:2px}',
-      '.dsdk-chip{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.16));',
+      '.dsdk-chip{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.16));',
       'color:var(--dsw-alias-label-secondary,#a7adb6)}',
       '.dsdk-search{margin:6px 18px 8px;display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:9px;',
-      'background:var(--dsw-alias-bg-sunken,rgba(127,127,127,.1));border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.1))}',
+      'background:var(--dsw-alias-bg-layer-1,rgba(127,127,127,.1));border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.1))}',
       '.dsdk-search input{flex:1;border:0;background:transparent;color:inherit;font:inherit;font-size:13px;outline:none}',
       '.dsdk-list{flex:1;overflow:auto;padding:4px 10px 8px}',
       '.dsdk-row{display:flex;gap:10px;align-items:flex-start;padding:7px 8px;border-radius:8px;cursor:pointer}',
-      '.dsdk-row:hover{background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.12))}',
-      '.dsdk-row input{margin-top:3px;accent-color:var(--dsw-alias-brand-primary,#3b82f6)}',
-      '.dsdk-meta{font-size:11px;color:var(--dsw-alias-label-tertiary,#7f858e);margin-top:1px}',
+      '.dsdk-row:hover{background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.12))}',
+      '.dsdk-row input{margin-top:3px;accent-color:#512bd4}',
+      '.dsdk-meta{font-size:11px;color:var(--dsw-alias-label-secondary,#7f858e);margin-top:1px}',
       '.dsdk-desc{font-size:12px;color:var(--dsw-alias-label-secondary,#a7adb6);margin-top:2px;',
       'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
       '.dsdk-foot{display:flex;align-items:center;gap:10px;padding:12px 18px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.1))}',
       '.dsdk-grow{flex:1}',
-      '.dsdk-hint{font-size:11px;color:var(--dsw-alias-label-tertiary,#7f858e)}',
-      '.dsdk-act{height:30px;padding:0 14px;border-radius:999px;border:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.14));',
+      '.dsdk-hint{font-size:11px;color:var(--dsw-alias-label-secondary,#7f858e)}',
+      '.dsdk-act{height:30px;padding:0 14px;border-radius:999px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.18));',
       'background:transparent;color:inherit;font:inherit;font-size:12.5px;cursor:pointer}',
-      '.dsdk-act:hover:not(:disabled){background:var(--dsw-alias-interactive-bg-hover-solid,rgba(127,127,127,.16))}',
-      '.dsdk-act[data-primary="true"]{background:var(--dsw-alias-brand-primary,#3b82f6);border-color:transparent;color:#fff;font-weight:600}',
-      '.dsdk-act[data-primary="true"]:hover:not(:disabled){filter:brightness(1.08)}',
+      '.dsdk-act:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.16))}',
+      '.dsdk-act[data-primary="true"]{background:#512bd4;border-color:transparent;color:#fff;font-weight:600}',
+      '.dsdk-act[data-primary="true"]:hover:not(:disabled){filter:brightness(1.1)}',
       '.dsdk-act:disabled{opacity:.5;cursor:default}',
       '.dsdk-loading{display:flex;flex-direction:column;align-items:center;gap:12px;padding:46px 20px}',
-      '.dsdk-spin{width:26px;height:26px;border-radius:999px;border:2px solid var(--dsw-alias-border-l1,rgba(255,255,255,.18));',
-      'border-top-color:var(--dsw-alias-brand-primary,#3b82f6);animation:dsdk-rotate .8s linear infinite}',
-      '.dsdk-error{color:var(--dsw-alias-state-error-primary,#ff6b6b);font-size:12.5px;padding:10px 18px}',
+      '.dsdk-spin{width:26px;height:26px;border-radius:999px;border:2px solid var(--dsw-alias-border-l2,rgba(255,255,255,.2));',
+      'border-top-color:#512bd4;animation:dsdk-rotate .8s linear infinite}',
+      '.dsdk-error{color:var(--dsw-alias-state-error-primary,#ff6b6b);font-size:12.5px;padding:12px 18px}',
       '@keyframes dsdk-rotate{to{transform:rotate(360deg)}}',
       '@keyframes dsdk-fade{from{opacity:0}to{opacity:1}}',
     ].join('')
@@ -155,14 +118,12 @@ window.__ModuleLoader__.load({
       return () => tag.remove()
     }
 
-    /**
-     * The .NET mark, drawn as geometry instead of text: a 4.7px wordmark turns to
-     * mush at this size, while a stroked "N" inside the brand badge stays crisp.
-     */
-    function IconDotnet() {
+    /** The .NET mark as geometry: a stroked N stays crisp where a tiny wordmark blurs. */
+    function IconDotnet(props) {
+      const size = props && props.size ? props.size : 15
       return h(
         'svg',
-        { viewBox: '0 0 16 16', width: 15, height: 15, 'aria-hidden': true, style: { display: 'block' } },
+        { viewBox: '0 0 16 16', width: size, height: size, 'aria-hidden': true, style: { display: 'block' } },
         h('rect', { x: 0.5, y: 0.5, width: 15, height: 15, rx: 4.4, fill: '#512BD4' }),
         h('path', {
           d: 'M5.1 11.4V4.6L10.9 11.4V4.6',
@@ -175,23 +136,16 @@ window.__ModuleLoader__.load({
       )
     }
 
-    function IconClose() {
-      return h(
-        'svg',
-        { viewBox: '0 0 16 16', width: 13, height: 13, fill: 'none', 'aria-hidden': true },
-        h('path', { d: 'M4 4l8 8M12 4l-8 8', stroke: 'currentColor', strokeWidth: 1.4, strokeLinecap: 'round' }),
-      )
-    }
-
     async function request(url, body) {
-      const options = body === undefined
-        ? { method: 'GET', credentials: 'same-origin' }
-        : {
-            method: 'POST',
-            credentials: 'same-origin',
-            headers: { 'content-type': 'application/json' },
-            body: JSON.stringify(body),
-          }
+      const options =
+        body === undefined
+          ? { method: 'GET', credentials: 'same-origin' }
+          : {
+              method: 'POST',
+              credentials: 'same-origin',
+              headers: { 'content-type': 'application/json' },
+              body: JSON.stringify(body),
+            }
       const response = await fetch(url, options)
       let payload = null
       try {
@@ -199,30 +153,38 @@ window.__ModuleLoader__.load({
       } catch {
         payload = null
       }
-      if (!response.ok) {
-        const message = payload && payload.error ? payload.error : `HTTP ${response.status}`
-        throw new Error(message)
-      }
+      if (!response.ok) throw new Error(payload && payload.error ? payload.error : `HTTP ${response.status}`)
       return payload
     }
 
-    /* ---------------------------------------------------------------- *
-     * composer button
-     * ---------------------------------------------------------------- */
-
     function ComposerButton(props) {
       const sessionId = props && props.sessionId ? props.sessionId : null
-      const [, force] = React.useState(0)
+      const strings = t()
+      const [open, setOpen] = React.useState(false)
+      const [phase, setPhase] = React.useState('idle') // idle | loading | ready | error
+      const [panel, setPanel] = React.useState(null)
+      const [error, setError] = React.useState('')
       const [count, setCount] = React.useState(0)
+      const [query, setQuery] = React.useState('')
+      const [selection, setSelection] = React.useState([])
+      const [busy, setBusy] = React.useState(false)
+      const searchRef = React.useRef(null)
 
-      React.useEffect(() => store.subscribe(() => force((value) => value + 1)), [])
+      const applyPanel = React.useCallback((payload) => {
+        setPanel(payload)
+        setSelection(payload.injected.length > 0 ? payload.injected : payload.suggested)
+        setCount(payload.injected.length)
+      }, [])
 
+      // Initial badge: how many skills this project already has.
       React.useEffect(() => {
         let cancelled = false
         if (sessionId === null) return undefined
         request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}`)
-          .then((panel) => {
-            if (!cancelled && panel && panel.ok === true) setCount(panel.injected.length)
+          .then((payload) => {
+            if (cancelled || payload === null || payload.ok !== true) return
+            setPanel(payload)
+            setCount(payload.injected.length)
           })
           .catch(() => {
             /* the panel reports the real error when opened */
@@ -230,109 +192,78 @@ window.__ModuleLoader__.load({
         return () => {
           cancelled = true
         }
-      }, [sessionId, store.revision])
-
-      const strings = t()
-      const active = count > 0
-      return h(
-        'div',
-        { className: 'dsdk-root' },
-        h(
-          'button',
-          {
-            type: 'button',
-            className: 'dsdk-btn',
-            title: strings.buttonTitle,
-            'aria-label': strings.buttonTitle,
-            'data-active': active ? 'true' : 'false',
-            disabled: sessionId === null,
-            onClick: () => store.patch({ open: true, sessionId }),
-          },
-          h(IconDotnet),
-          h('span', null, strings.button),
-          active ? h('span', { className: 'dsdk-count' }, String(count)) : null,
-        ),
-      )
-    }
-
-    /* ---------------------------------------------------------------- *
-     * panel
-     * ---------------------------------------------------------------- */
-
-    function SkillRow(props) {
-      const { skill, checked, onToggle, strings } = props
-      return h(
-        'label',
-        { className: 'dsdk-row' },
-        h('input', { type: 'checkbox', checked, onChange: onToggle }),
-        h(
-          'span',
-          { style: { minWidth: 0 } },
-          h('span', { style: { fontSize: '13px' } }, skill.name),
-          h('span', { className: 'dsdk-meta' }, ` · ${skill.package} · ≈${skill.tokens} tok`),
-          skill.description ? h('span', { className: 'dsdk-desc' }, skill.description) : null,
-        ),
-      )
-    }
-
-    function Panel() {
-      const [, force] = React.useState(0)
-      const [phase, setPhase] = React.useState('idle') // idle | loading | ready | error
-      const [panel, setPanel] = React.useState(null)
-      const [error, setError] = React.useState('')
-      const [query, setQuery] = React.useState('')
-      const [selection, setSelection] = React.useState([])
-      const [busy, setBusy] = React.useState(false)
-      const searchRef = React.useRef(null)
-
-      React.useEffect(() => store.subscribe(() => force((value) => value + 1)), [])
-
-      const strings = t()
-      const open = store.open === true
-
-      React.useEffect(() => {
-        if (!open) return undefined
-        let cancelled = false
-        setPhase('loading')
-        setError('')
-        setQuery('')
-        request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(store.sessionId ?? '')}`)
-          .then((payload) => {
-            if (cancelled) return
-            if (payload === null || payload.ok !== true) {
-              setError(payload?.error ?? 'no panel data')
-              setPhase('error')
-              return
-            }
-            setPanel(payload)
-            setSelection(payload.injected.length > 0 ? payload.injected : payload.suggested)
-            setPhase('ready')
-            window.setTimeout(() => searchRef.current?.focus(), 30)
-          })
-          .catch((failure) => {
-            if (cancelled) return
-            setError(failure?.message ?? String(failure))
-            setPhase('error')
-          })
-        return () => {
-          cancelled = true
-        }
-      }, [open])
+      }, [sessionId])
 
       React.useEffect(() => {
         if (!open) return undefined
         const onKey = (event) => {
-          if (event.key === 'Escape') {
-            store.patch({ open: false })
-          }
+          if (event.key === 'Escape') setOpen(false)
         }
         window.addEventListener('keydown', onKey)
         return () => window.removeEventListener('keydown', onKey)
       }, [open])
 
-      if (!open) return null
+      const openPanel = React.useCallback(async () => {
+        setOpen(true)
+        setPhase(panel !== null ? 'ready' : 'loading')
+        setError('')
+        if (sessionId === null) {
+          setError('this session has no id')
+          setPhase('error')
+          return
+        }
+        setPhase('loading')
+        try {
+          const payload = await request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}`)
+          if (payload === null || payload.ok !== true) throw new Error(payload?.error ?? 'no panel data')
+          applyPanel(payload)
+          setQuery('')
+          setPhase('ready')
+          window.setTimeout(() => searchRef.current?.focus(), 30)
+        } catch (failure) {
+          setError(failure && failure.message ? failure.message : String(failure))
+          setPhase('error')
+        }
+      }, [sessionId, panel, applyPanel])
 
-      const close = () => store.patch({ open: false })
+      const submit = React.useCallback(async () => {
+        if (busy) return
+        setBusy(true)
+        try {
+          const result = await request(APPLY_ENDPOINT, { sessionId, skills: selection })
+          if (result && result.ok === true && result.panel) {
+            applyPanel(result.panel)
+            setOpen(false)
+          } else {
+            throw new Error(result?.error ?? 'apply failed')
+          }
+        } catch (failure) {
+          setError(failure && failure.message ? failure.message : String(failure))
+          setPhase('error')
+        } finally {
+          setBusy(false)
+        }
+      }, [busy, sessionId, selection, applyPanel])
+
+      const clear = React.useCallback(async () => {
+        if (busy) return
+        setBusy(true)
+        try {
+          const result = await request(CLEAR_ENDPOINT, { sessionId })
+          if (result && result.ok === true && result.panel) {
+            applyPanel(result.panel)
+            setSelection([])
+            setOpen(false)
+          } else {
+            throw new Error(result?.error ?? 'clear failed')
+          }
+        } catch (failure) {
+          setError(failure && failure.message ? failure.message : String(failure))
+          setPhase('error')
+        } finally {
+          setBusy(false)
+        }
+      }, [busy, sessionId, applyPanel])
 
       const selectedSet = new Set(selection)
       const toggle = (name) => {
@@ -343,150 +274,128 @@ window.__ModuleLoader__.load({
         if (panel === null) return []
         const needle = query.trim().toLowerCase()
         const suggested = new Set(panel.suggested)
-        const list = panel.catalog
-          .filter((skill) => needle === '' || skill.name.toLowerCase().includes(needle) || skill.package.toLowerCase().includes(needle) || skill.description.toLowerCase().includes(needle))
+        return panel.catalog
+          .filter(
+            (skill) =>
+              needle === '' ||
+              skill.name.toLowerCase().includes(needle) ||
+              skill.package.toLowerCase().includes(needle) ||
+              skill.description.toLowerCase().includes(needle),
+          )
           .map((skill) => ({ ...skill, suggested: suggested.has(skill.name) }))
-        list.sort((left, right) => {
-          if (left.suggested !== right.suggested) return left.suggested ? -1 : 1
-          return left.name.localeCompare(right.name)
-        })
-        return list
+          .sort((left, right) => (left.suggested === right.suggested ? left.name.localeCompare(right.name) : left.suggested ? -1 : 1))
       }, [panel, query])
 
-      const chosenTokens = panel === null
-        ? 0
-        : selection.reduce((sum, name) => sum + (panel.catalog.find((skill) => skill.name === name)?.tokens ?? 0), 0)
+      const chosenTokens =
+        panel === null ? 0 : selection.reduce((sum, name) => sum + (panel.catalog.find((skill) => skill.name === name)?.tokens ?? 0), 0)
 
-      const submit = async () => {
-        if (busy) return
-        setBusy(true)
-        try {
-          const result = await request(APPLY_ENDPOINT, { sessionId: store.sessionId, skills: selection })
-          if (result && result.ok === true) {
-            setPanel(result.panel)
-            store.patch({ open: false })
-          } else {
-            throw new Error(result?.error ?? 'apply failed')
-          }
-        } catch (failure) {
-          setError(failure?.message ?? String(failure))
-          setPhase('error')
-        } finally {
-          setBusy(false)
-        }
-      }
-
-      const clear = async () => {
-        if (busy) return
-        setBusy(true)
-        try {
-          const result = await request(CLEAR_ENDPOINT, { sessionId: store.sessionId })
-          if (result && result.ok === true) {
-            setSelection([])
-            setPanel(result.panel)
-            store.patch({ open: false })
-          } else {
-            throw new Error(result?.error ?? 'clear failed')
-          }
-        } catch (failure) {
-          setError(failure?.message ?? String(failure))
-          setPhase('error')
-        } finally {
-          setBusy(false)
-        }
-      }
+      const dialog = !open
+        ? null
+        : h(
+            'div',
+            {
+              className: 'dsdk-backdrop',
+              onMouseDown: (event) => {
+                if (event.target === event.currentTarget) setOpen(false)
+              },
+            },
+            h(
+              'div',
+              { className: 'dsdk-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': strings.title },
+              h(
+                'div',
+                { className: 'dsdk-head' },
+                h('div', { className: 'dsdk-title' }, h(IconDotnet), h('span', null, strings.title), h('span', { className: 'dsdk-grow' })),
+                panel && panel.project ? h('div', { className: 'dsdk-sub' }, `${panel.project.name} — ${panel.project.root}`) : null,
+                panel && phase === 'ready'
+                  ? h(
+                      'div',
+                      { className: 'dsdk-chips' },
+                      h('span', { className: 'dsdk-chip' }, `${strings.detected}:`),
+                      panel.detected.signals.length === 0
+                        ? h('span', { className: 'dsdk-chip' }, strings.nothing)
+                        : panel.detected.signals.map((signal) => h('span', { className: 'dsdk-chip', key: signal.id }, signal.label)),
+                    )
+                  : null,
+              ),
+              phase === 'loading'
+                ? h('div', { className: 'dsdk-loading' }, h('div', { className: 'dsdk-spin' }), h('div', { className: 'dsdk-hint' }, strings.analysing))
+                : phase === 'error'
+                  ? h('div', { className: 'dsdk-error' }, `${strings.error}${error}`)
+                  : h(
+                      'div',
+                      { style: { display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 } },
+                      h(
+                        'div',
+                        { className: 'dsdk-search' },
+                        h('input', {
+                          ref: searchRef,
+                          type: 'search',
+                          value: query,
+                          placeholder: strings.search,
+                          onChange: (event) => setQuery(event.target.value),
+                        }),
+                      ),
+                      h(
+                        'div',
+                        { className: 'dsdk-list' },
+                        rows.length === 0
+                          ? h('div', { className: 'dsdk-hint', style: { padding: '18px' } }, strings.empty)
+                          : rows.map((skill) =>
+                              h(
+                                'label',
+                                { className: 'dsdk-row', key: skill.name },
+                                h('input', { type: 'checkbox', checked: selectedSet.has(skill.name), onChange: () => toggle(skill.name) }),
+                                h(
+                                  'span',
+                                  { style: { minWidth: 0 } },
+                                  h('span', { style: { fontSize: '13px' } }, skill.name),
+                                  h('span', { className: 'dsdk-meta' }, ` · ${skill.package} · ≈${skill.tokens} tok`),
+                                  skill.description ? h('span', { className: 'dsdk-desc' }, skill.description) : null,
+                                ),
+                              ),
+                            ),
+                      ),
+                      h(
+                        'div',
+                        { className: 'dsdk-foot' },
+                        h('span', { className: 'dsdk-hint' }, `${strings.selected} ${selection.length} · ≈${chosenTokens} tok`),
+                        h('span', { className: 'dsdk-grow' }),
+                        h('span', { className: 'dsdk-hint' }, strings.confirmHint),
+                        h(
+                          'button',
+                          { type: 'button', className: 'dsdk-act', onClick: clear, disabled: busy || (panel ? panel.injected.length === 0 : true) },
+                          strings.clear,
+                        ),
+                        h('button', { type: 'button', className: 'dsdk-act', onClick: () => setOpen(false), disabled: busy }, strings.cancel),
+                        h(
+                          'button',
+                          { type: 'button', className: 'dsdk-act', 'data-primary': 'true', onClick: submit, disabled: busy },
+                          `${strings.inject} ${selection.length}`,
+                        ),
+                      ),
+                    ),
+            ),
+          )
 
       return h(
         'div',
-        {
-          className: 'dsdk-backdrop',
-          onMouseDown: (event) => {
-            if (event.target === event.currentTarget) close()
-          },
-        },
+        { className: 'dsdk-root' },
         h(
-          'div',
-          { className: 'dsdk-panel', role: 'dialog', 'aria-modal': 'true', 'aria-label': strings.title },
-          h(
-            'div',
-            { className: 'dsdk-head' },
-            h(
-              'div',
-              { className: 'dsdk-title' },
-              h(IconDotnet),
-              h('span', null, strings.title),
-              h('span', { className: 'dsdk-grow' }),
-              h('button', { type: 'button', className: 'dsdk-act', style: { height: 24, padding: '0 8px' }, onClick: close, title: strings.cancel }, h(IconClose)),
-            ),
-            panel && panel.project
-              ? h('div', { className: 'dsdk-sub' }, `${panel.project.name} — ${panel.project.root}`)
-              : null,
-            panel && phase === 'ready'
-              ? h(
-                  'div',
-                  { className: 'dsdk-chips' },
-                  h('span', { className: 'dsdk-chip' }, `${strings.detected}:`),
-                  panel.detected.signals.length === 0
-                    ? h('span', { className: 'dsdk-chip' }, strings.nothing)
-                    : panel.detected.signals.map((signal) => h('span', { className: 'dsdk-chip', key: signal.id }, signal.label)),
-                )
-              : null,
-          ),
-
-          phase === 'loading'
-            ? h(
-                'div',
-                { className: 'dsdk-loading' },
-                h('div', { className: 'dsdk-spin' }),
-                h('div', { style: { fontSize: '13px', color: 'var(--dsw-alias-label-secondary,#a7adb6)' } }, strings.analysing),
-              )
-            : null,
-
-          phase === 'error' ? h('div', { className: 'dsdk-error' }, `${strings.error}${error}`) : null,
-
-          phase === 'ready'
-            ? h(
-                'div',
-                { style: { display: 'flex', flexDirection: 'column', minHeight: 0, flex: 1 } },
-                h(
-                  'div',
-                  { className: 'dsdk-search' },
-                  h('input', {
-                    ref: searchRef,
-                    type: 'search',
-                    value: query,
-                    placeholder: strings.search,
-                    onChange: (event) => setQuery(event.target.value),
-                  }),
-                ),
-                h(
-                  'div',
-                  { className: 'dsdk-list' },
-                  rows.length === 0
-                    ? h('div', { className: 'dsdk-hint', style: { padding: '18px' } }, strings.empty)
-                    : rows.map((skill) =>
-                        h(SkillRow, {
-                          key: skill.name,
-                          skill,
-                          strings,
-                          checked: selectedSet.has(skill.name),
-                          onToggle: () => toggle(skill.name),
-                        }),
-                      ),
-                ),
-                h(
-                  'div',
-                  { className: 'dsdk-foot' },
-                  h('span', { className: 'dsdk-hint' }, `${strings.selected} ${selection.length} · ≈${chosenTokens} tok`),
-                  h('span', { className: 'dsdk-grow' }),
-                  h('span', { className: 'dsdk-hint' }, strings.confirmHint),
-                  h('button', { type: 'button', className: 'dsdk-act', onClick: clear, disabled: busy || panel.injected.length === 0 }, strings.clear),
-                  h('button', { type: 'button', className: 'dsdk-act', onClick: close, disabled: busy }, strings.cancel),
-                  h('button', { type: 'button', className: 'dsdk-act', 'data-primary': 'true', onClick: submit, disabled: busy }, `${strings.inject} ${selection.length}`),
-                ),
-              )
-            : null,
+          'button',
+          {
+            type: 'button',
+            className: 'dsdk-btn',
+            title: strings.buttonTitle,
+            'aria-label': strings.buttonTitle,
+            'data-active': count > 0 ? 'true' : 'false',
+            onClick: openPanel,
+          },
+          h(IconDotnet),
+          h('span', null, strings.button),
+          count > 0 ? h('span', { className: 'dsdk-count' }, String(count)) : null,
         ),
+        dialog,
       )
     }
 
@@ -503,16 +412,6 @@ window.__ModuleLoader__.load({
               label: () => t().button,
             },
             ComposerButton,
-          ),
-        )
-        ctx.slots.inject('shell.overlay', () =>
-          ctx.slots.register(
-            {
-              name: 'shell.overlay',
-              id: 'dsh-dotnet-skills.panel',
-              order: 10,
-            },
-            Panel,
           ),
         )
       },
