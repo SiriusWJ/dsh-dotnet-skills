@@ -48,7 +48,7 @@ window.__ModuleLoader__.load({
 
     const STRINGS = {
       zh: {
-        button: '技能',
+        button: '.net技能',
         buttonTitle: '按当前项目注入 .NET 技能',
         title: '注入 .NET 技能',
         analysing: '正在分析当前项目…',
@@ -67,7 +67,7 @@ window.__ModuleLoader__.load({
         confirmHint: '确认后写入 <项目>/.dsh/skills，仅本项目会话可见',
       },
       en: {
-        button: 'Skills',
+        button: '.NET skills',
         buttonTitle: 'Inject .NET skills for this project',
         title: 'Inject .NET skills',
         analysing: 'Analysing this project…',

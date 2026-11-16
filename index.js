@@ -21,6 +21,7 @@ import { dirname, join } from "node:path";
 import { buildIndex } from "./lib/catalog.js";
 import { analyzeProject } from "./lib/detect.js";
 import { clearProject, injectProject, readInjection, skillsDir } from "./lib/inject.js";
+import { formatMatches, loadSkill, searchSkills } from "./lib/search.js";
 
 export const inject = ["tools"];
 
@@ -553,6 +554,91 @@ function registerTool(ctx, updater, cfg, warn) {
 }
 
 /* ------------------------------------------------------------------ *
+ * model tool: catalog search + load
+ * ------------------------------------------------------------------ */
+
+function registerFindTool(ctx, updater, warn) {
+  try {
+    ctx.inject(["tools"], (scoped) => {
+      try {
+        if (typeof scoped?.tools?.register !== "function") return;
+        const dispose = scoped.tools.register({
+          name: "netskill_find",
+          description:
+            "Search the cached .NET skill catalog and load one skill's full instructions. The catalog (200+ .NET skills: MSBuild, EF Core, WinForms/WPF/Blazor/MAUI, testing, profiling, migrations, architecture) is deliberately NOT in this session, so search it when a task needs deeper .NET/C# expertise than you have, then load the exact skill. Pass `query` to search by keywords, or `name` to load a skill whose name you already know.",
+          parameters: {
+            type: "object",
+            properties: {
+              query: {
+                type: "string",
+                description:
+                  'Keywords across skill name, package and description, e.g. "msbuild binlog", "ef core performance", "winforms designer", "xunit migration".',
+              },
+              name: {
+                type: "string",
+                description: "Exact skill name to load; takes precedence over query.",
+              },
+              limit: {
+                type: "integer",
+                description: "Maximum matches to list (default 12, maximum 50).",
+              },
+            },
+            additionalProperties: false,
+          },
+          output: {
+            schema: {
+              type: "object",
+              properties: { report: { type: "string" } },
+              required: ["report"],
+              additionalProperties: false,
+            },
+            render(_args, value) {
+              return [{ type: "text", text: typeof value?.report === "string" ? value.report : JSON.stringify(value, null, 2) }];
+            },
+          },
+          async execute(args) {
+            try {
+              const index = updater.index();
+              const name = String(args?.name ?? "").trim();
+              if (name !== "") {
+                const loaded = loadSkill(index, name);
+                if (loaded.ok !== true) return { report: loaded.error };
+                return {
+                  report: [
+                    `<skill_content name="${loaded.skill.name}" package="${loaded.skill.packageName}">`,
+                    `Base directory for this skill: ${loaded.dir}`,
+                    "Resolve relative paths mentioned in the instructions against that directory; load referenced resources only as needed.",
+                    "",
+                    loaded.body,
+                    "</skill_content>",
+                  ].join("\n"),
+                };
+              }
+              const query = String(args?.query ?? "").trim();
+              if (query === "") {
+                return { report: "netskill_find needs `query` to search the catalog, or `name` to load one skill." };
+              }
+              return { report: formatMatches(searchSkills(index, query, args?.limit), index.skills.length, query) };
+            } catch (error) {
+              return { report: `netskill_find: ${String(error?.message ?? error)}` };
+            }
+          },
+        });
+        try {
+          if (typeof dispose === "function" && typeof scoped.on === "function") scoped.on("dispose", dispose);
+        } catch {
+          /* disposal is best-effort */
+        }
+      } catch (error) {
+        warn(`could not register the netskill_find tool: ${String(error)}`);
+      }
+    });
+  } catch (error) {
+    warn(`could not inject the tools service: ${String(error)}`);
+  }
+}
+
+/* ------------------------------------------------------------------ *
  * plugin entry
  * ------------------------------------------------------------------ */
 
@@ -578,6 +664,7 @@ export function apply(ctx, config = {}) {
 
   registerRoutes(ctx, updater, cfg, warn);
   registerTool(ctx, updater, cfg, warn);
+  registerFindTool(ctx, updater, warn);
 
   try {
     ctx.effect(() => {

@@ -35,6 +35,15 @@ Pure code over the project files; each rule reports the evidence that fired it, 
 
 `dotnet_skills` — `status` (checkout state), `analyze` (detected stack + suggestions for the current project), `apply` (inject a skill-name list), `clear`, `sync` (refresh the checkout now).
 
+`netskill_find` — the model's own way in. The catalog is not in the session, so the model searches it with keywords and loads exactly the skill it needs:
+
+```
+netskill_find { query: "msbuild binlog" }        → matching entries (name, package, token cost, description)
+netskill_find { name: "binlog-generation" }      → the full instructions + the skill's resource directory
+```
+
+This is different from the composer panel on purpose: the panel decides what a *project* keeps, while `netskill_find` pulls one skill into the current step without touching the project.
+
 ## Configuration
 
 The `dotnet-skills` row of this bundle's `cordis.patch.yml`; override it from the profile's own `cordis.patch.yml` (a patch replaces the whole `config`):
