@@ -1,9 +1,9 @@
 {
   "name": "dsh-dotnet-skills",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "type": "module",
-  "description": "Project-scoped .NET skills for DeepSeek Harness: a composer button analyses the project, suggests the matching .NET skills, and injects only those into the project's own skill root.",
+  "description": "Project-scoped .NET skills for DeepSeek Harness: the composer button reads the project, the current model picks from a 203-skill catalog, and the selection is copied into the project (two copies) and kept in sync; optional Microsoft Learn MCP + CLI.",
   "license": "MIT",
   "exports": {
     ".": "./index.js",

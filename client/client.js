@@ -21,7 +21,6 @@ window.__ModuleLoader__.load({
     const APPLY_ENDPOINT = '/dsh-dotnet-skills/apply'
     const CLEAR_ENDPOINT = '/dsh-dotnet-skills/clear'
     const SETTINGS_ENDPOINT = '/dsh-dotnet-skills/settings'
-    const LEARN_INSTALL_ENDPOINT = '/dsh-dotnet-skills/learn/install'
     const LEARN_ENDPOINT = '/dsh-dotnet-skills/learn'
     const BRAND = '#512bd4'
 
@@ -86,7 +85,6 @@ window.__ModuleLoader__.load({
         learnMcp: 'MCP 服务器（learn.microsoft.com/api/mcp）',
         learnCliShort: 'CLI',
         learnDetecting: '检测中…',
-        learnRetry: '重试安装 CLI',
         learnInstalling: '正在安装…',
         learnInstalled: '已安装',
         learnNotInstalled: '未安装',
@@ -134,7 +132,6 @@ window.__ModuleLoader__.load({
         learnMcp: 'MCP server (learn.microsoft.com/api/mcp)',
         learnCliShort: 'CLI',
         learnDetecting: 'checking…',
-        learnRetry: 'Retry the CLI install',
         learnInstalling: 'installing…',
         learnInstalled: 'installed',
         learnNotInstalled: 'not installed',
@@ -282,10 +279,7 @@ window.__ModuleLoader__.load({
       '.dsdk-cfg-save{height:30px;padding:0 14px;border-radius:8px;border:0;background:' + BRAND + ';color:#fff;font:inherit;',
       'font-size:12.5px;font-weight:600;cursor:pointer}',
       '.dsdk-cfg-save:disabled{opacity:.45;cursor:default}',
-      '.dsdk-cfg-ghost{height:30px;padding:0 12px;border-radius:8px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.16));',
       'background:transparent;color:inherit;font:inherit;font-size:12.5px;cursor:pointer}',
-      '.dsdk-cfg-ghost:hover:not(:disabled){background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.18))}',
-      '.dsdk-cfg-ghost:disabled{opacity:.45;cursor:default}',
       '.dsdk-switch{position:relative;display:inline-flex;align-items:center;width:46px;height:26px;border-radius:999px;',
       'border:1px solid rgba(255,255,255,.3);box-sizing:border-box;padding:0;cursor:pointer;flex:none;',
       'background:rgba(255,255,255,.16);box-shadow:inset 0 1px 2px rgba(0,0,0,.35);transition:background-color .15s ease,border-color .15s ease}',

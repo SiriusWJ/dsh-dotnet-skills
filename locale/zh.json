@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "dotnet 技能库",
-    "description": "把 GitHub 上的 .NET 技能目录（默认 managedcode/dotnet-skills，203 个技能）同步到 DSH 用户技能根目录，并每 6 小时检查一次更新，让 .NET 技能在 DSH 运行期间保持最新。"
+    "description": "按项目注入 .NET 技能：读取项目事实后由当前模型从 203 个技能中挑选，复制到 <项目>/.dsh/Skills/DotnetSkills 与 .dsh/skills，并在后台目录更新时同步两份副本；面板右上角可按工作目录开启 Microsoft Learn MCP（自动安装 mslearn CLI）。"
   }
 }

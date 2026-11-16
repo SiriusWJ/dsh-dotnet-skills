@@ -1,104 +1,97 @@
 # dsh-dotnet-skills
 
-Project-scoped .NET skills for DeepSeek Harness: **nothing is in your context until you ask for it**.
+Project-scoped .NET skills for DeepSeek Harness. A composer button reads the project, asks the current model which of 203 catalog skills actually fit, and copies only those into the project — plus an optional Microsoft Learn MCP server and its `mslearn` CLI.
 
-A composer button (`技能`) analyses the project you are working in, suggests the .NET skills that match its stack, and injects only those — into `<project>/.dsh/skills`, DSH's project skill root. Other projects, and sessions that never opened the panel, see nothing.
+Nothing is mirrored into the user skill root: another project, or another user, never sees this project's selection.
 
 ## Flow
 
-```
-composer button ──▶ host gathers project facts (TFMs, package references,
-                     project names, file mix — no guessing)
-                ──▶ one background `ctx.llm` call: the current model sees the
-                     facts + the whole catalog and picks ≤ 8 skills with reasons
-                ──▶ panel: facts chips + the model's picks (pre-selected) +
-                     searchable catalog for anything else, plus 重新分析
-                ──▶ confirm → copy the selection into <project>/.dsh/skills
-                ──▶ DSH's filesystem provider reloads that project root; the next
-                     model step sees a skill catalog containing exactly those skills
+```text
+composer button (dotnet技能)
+  ├─ facts      local, exact: target frameworks, package references, SDK version,
+  │             structure signals (Program.cs, razor, xaml, proto, Dockerfile,
+  │             workflows, appsettings…), top usings/namespaces, README head
+  ├─ judgement  one background ctx.llm call: facts + the whole catalog → ≤ N skills,
+  │             each with a one-line reason, grounded in the facts above
+  └─ inject     two real copies inside the project (see Layout)
 ```
 
-Selection is cached per (checkout head, project facts) for 30 minutes, so reopening the panel is instant; `重新分析` forces a fresh model call.
+The pick is cached per `(catalog head, project facts, UI language)` for 30 minutes; `重新分析` bypasses the cache and waits for a fresh call. Opening the panel when skills are already injected does **not** call the model — it just shows the current selection.
 
-The button shows the injected count for the project, and the state is unified per project — every session working in that project sees the same injection.
+## Layout
 
-## Why the model picks, not a rule table
+```text
+<project>/.dsh/
+├── Skills/DotnetSkills/<skill>/…   the managed repository this plugin owns
+├── skills/<skill>/…                the copy DSH discovers (roots are one level deep)
+└── dotnet-skills.json              manifest: fingerprints, ownership, learnMcp
+```
 
-The first version mapped project files to catalog packages with a rule table. It over-suggested (one common package pulled in a whole package's skills) and missed nuance. The facts are still gathered locally — that is cheap and exact — but the *judgement* now comes from the model, which can weigh "this project has EF Core but the work is about a WinForms grid" and pick two skills instead of twenty.
+On Windows `.dsh/Skills` and `.dsh/skills` are the same directory, so the repository sits at `.dsh/skills/DotnetSkills/`. DSH ignores that container because it holds no `SKILL.md` directly.
 
-## Detection
+Both copies are written and removed together; the second is copied from the first, so the project stays usable even if the checkout disappears.
 
-Two layers, deliberately split:
+## Keeping up to date
 
-- **Facts** (local, exact, cheap): target frameworks, `PackageReference`/`PackageVersion` names, project names and counts, and the file mix, gathered from `<project>` with bounded traversal.
-- **Judgement** (one background model call): the facts plus the whole catalog go to the current model, which returns at most `selectMaxSkills` (default 10), most relevant first skills with a one-line reason each.
+The host refreshes the catalog checkout on a timer (default 6 h, plus once shortly after start). When the fetched head changes, every project this plugin has filled is refreshed: changed fingerprints are rewritten in both copies, skills that disappeared upstream are dropped. Project roots are tracked in `$DSH_HOME/dotnet-skills.projects.json`.
 
-The panel shows the facts as chips, the model's picks pre-selected with their reasons, and the full catalog for anything else. When the model route is unavailable the panel says so and preselects nothing — it never falls back to a rule table.
+## Microsoft Learn
 
-## Behaviour
+The panel's top-right pill toggles the public Microsoft Learn MCP server (`https://learn.microsoft.com/api/mcp`) **for that working directory**. The choice is stored in the project manifest; the process-wide `@deepseek-ai/dsh-mcp-client` child plugin is mounted while at least one known project wants it, and disposed when the last one turns it off. Turning it on also makes sure the `@microsoft/learn-cli` (`mslearn`) CLI is installed globally, detecting an existing install first. Tools appear as `mcp__microsoft-learn-cli__*`.
 
-- **Cache, not injection** — the vendored checkout (`$DSH_HOME/vendor/dotnet-skills`) is refreshed every 6 hours (and shortly after start) with `git fetch` + `reset --hard`. It never enters the skill catalog by itself.
-- **Project scoped** — `<project>/.dsh/skills` is the rank-100 project root DSH already watches, so injected skills hot-reload without a restart and never leak into another project.
-- **Ownership** — `<project>/.dsh/dotnet-skills.json` records what this plugin injected. Clearing removes exactly those; a hand-written skill with the same name is never deleted.
-- **Clean git** — `/.dsh/` is added to the project's `.git/info/exclude` (local only; no tracked `.gitignore` change).
-- **Source switch** — a checkout whose `origin` differs from the configured `repoUrl` is discarded and cloned again.
+## Tool
 
-## Tools
+`dotnet_skills` — the model-facing half of the same catalog:
 
-One model-facing tool, three actions:
-
-| Call | Result |
+| Action | Result |
 |---|---|
-| `dotnet_skills { action: "find", query: "msbuild binlog" }` | matching skills: name + one-line description |
-| `dotnet_skills { action: "find" }` | detect the project's stack, list the skills that fit, and show the current injection |
-| `dotnet_skills { action: "add", skills: ["binlog-generation"] }` | add to the project's set (never drops the user's picks); returns each `SKILL.md` path |
-| `dotnet_skills { action: "remove", skills: ["binlog-generation"] }` | remove **only skills this tool added**; user-injected ones are protected |
-
-`find` without a query is the old `analyze`, which is why the separate tool is gone. Refreshing the checkout is not a tool action: the host does it on its timer (every 6 hours, plus shortly after start), so the model never needs to know how the cache works.
-
-### Who owns what
-
-The project manifest records the injector of every skill:
-
-- `user` — chosen from the composer panel (a human decision);
-- `model` — added by `action: add`.
-
-`action: remove` only deletes `model` entries and reports the `user` ones it kept, so an agent that changes its mind can clean up after itself without touching what you chose. Manifests written before this rule existed (fingerprint only) are treated as `user` — the safe side.
-
-The panel itself (routes `/dsh-dotnet-skills/apply`, `/clear`) always acts as the human: it replaces the whole selection, and clearing removes everything this plugin owns.
+| `find` with `query` | keyword search over the catalog (name, package, description) |
+| `find` without `query` | the project's facts and current injection, no rule guessing |
+| `add` | adds skills, records them as `model`-owned |
+| `remove` | removes only `model`-owned skills; reports `user`-owned ones it kept |
+| `probe` | runs the panel's model selection once and prints the raw result (diagnostics) |
 
 ## Configuration
 
-Edit it in **Plugins → Installed → dsh-dotnet-skills**; the plugin declares a `Config` schema, so the manager renders a form with the bounds below and writes the profile's patch for the `dotnet-skills` row.
+**Plugins → Installed → dsh-dotnet-skills** renders the two panel knobs from a `Config` schema; saving goes through the config editor, which restarts the plugin.
 
 | Key | Default | Meaning |
 |---|---|---|
-| `intervalHours` | `6` | catalog refresh interval — one of `6`, `12`, `24`, `72`, `168` hours (6 h / 12 h / 1 day / 3 days / 1 week) |
+| `intervalHours` | `6` | catalog refresh interval: `6`, `12`, `24`, `72`, `168` (6 h / 12 h / 1 day / 3 days / 1 week) |
 | `selectMaxSkills` | `10` | how many skills the model may pick per project, `1`–`50` |
-| `repoUrl` | `https://github.com/managedcode/dotnet-skills.git` | catalog source |
-| `branch` | `main` | branch to track |
-| `runOnStart` | `true` | refresh once after start |
-| `startDelaySeconds` | `20` | delay before that first refresh |
+| `repoUrl` / `branch` | managedcode/dotnet-skills, `main` | catalog source |
+| `runOnStart` / `startDelaySeconds` | `true`, `20` | refresh once after start, after this delay |
 | `checkoutDir` | `$DSH_HOME/vendor/dotnet-skills` | shallow clone location |
 | `selectTimeoutMs` | `45000` | timeout of one panel analysis |
 
-`gitCommand` is the one key the form does not expose; set it in the profile patch when git is not on PATH.
-
-The panel footer shows the values in force (`刷新频率 6 小时 · 最大自动推荐 10`), so a session can tell which configuration it is running under.
+`gitCommand` is not in the form; set it in the profile patch when `git` is not on the DSH process's PATH.
 
 ## HTTP surface (same origin, JSON only)
 
 | Route | Method | Purpose |
 |---|---|---|
-| `/dsh-dotnet-skills/state?sessionId=&refresh=1` | GET | project facts, model-picked suggestions, catalog, current injection (`refresh=1` re-runs the model call) |
-| `/dsh-dotnet-skills/apply` | POST | `{sessionId, skills[]}` → inject and prune |
-| `/dsh-dotnet-skills/clear` | POST | `{sessionId}` → remove everything this plugin injected |
+| `/dsh-dotnet-skills/state?sessionId=&lang=&refresh=1` | GET | facts, model picks with reasons, catalog, current injection (`refresh=1` re-runs the model) |
+| `/dsh-dotnet-skills/apply` | POST | `{sessionId, skills[], lang}` → replace the selection (the panel acts as the human) |
+| `/dsh-dotnet-skills/clear` | POST | `{sessionId, lang}` → remove everything this plugin owns |
+| `/dsh-dotnet-skills/settings` | GET/POST | read or save the two knobs |
+| `/dsh-dotnet-skills/learn` | POST | `{sessionId, enabled}` → per-project Microsoft Learn switch |
 
-Mutations require `content-type: application/json` and a same-origin `Origin`, so a cross-site form or a bare script cannot change a project's injection.
+Mutations require a JSON content type and same-origin; the desktop app sends both.
+
+## Ownership
+
+Every manifest entry records who injected it: `user` (composer panel) or `model` (`dotnet_skills add`). `remove` deletes only `model` entries, so an agent can undo its own changes without deleting a human's selection.
 
 ## Limitations
 
-- Runs while DSH runs; the catalog refreshes at the next 6-hour check, not upstream's commit instant.
-- The model's picks are cached for 30 minutes per (checkout head, project facts); use `重新分析` for a fresh call.
-- One panel analysis costs one auxiliary model request (facts + catalog ≈ 7k input tokens, ≤700 output); reopening the panel is free until the cache expires.
-- Skill content is licensed by its upstream repository (`managedcode/dotnet-skills`).
+- DSH discovers skills one level deep, hence the flat `.dsh/skills/<name>` copy; a nested container would never be read.
+- One panel analysis costs one auxiliary model request (facts + catalog ≈ 7k input tokens, ≤700 output); reopening is free for 30 minutes.
+- The model picks; local rules only gather facts. An unusual layout (no project files, generated code) leaves it little to work with.
+- The MCP server is process-wide while any project wants it; per-project isolation is at the tooling level, not the socket level.
+
+## Development
+
+```bash
+node test/smoke.mjs    # facts, JSON parsing, provenance
+node test/layout.mjs   # two copies, catalog sync, clear
+```

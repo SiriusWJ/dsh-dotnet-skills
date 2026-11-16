@@ -1,18 +1,20 @@
 /**
- * dsh-dotnet-skills — on-demand .NET skills for the project you are working in.
+ * dsh-dotnet-skills — project-scoped .NET skills, picked by the current model.
  *
- * Nothing is mirrored globally any more: the vendored checkout is only a cache,
- * and a skill reaches the model when a human injects it for a project. The
- * composer button (client half) opens a panel, the host scans the project,
- * rules map the recognised .NET stack to catalog packages, and the confirmed
- * selection is copied into `<project>/.dsh/skills` — the project skill root DSH
- * already watches — so only sessions in that project see those skills.
+ * Nothing is mirrored globally: the vendored checkout is only a cache. Opening
+ * the composer panel reads the project's facts locally, asks the model to choose
+ * from the catalog, and copies the confirmed selection into the project twice
+ * (`.dsh/Skills/DotnetSkills` as the managed repository, `.dsh/skills` as the
+ * flat copy DSH discovers), so only sessions in that project see those skills.
  *
  * Responsibilities:
- *   - keep the checkout fresh (git fetch, every 6 hours, no token cost);
- *   - analyse a project's files locally (lib/detect.js);
- *   - copy/prune a selection in the project (lib/inject.js);
- *   - serve the composer panel (routes) and the model's `dotnet_skills` tool.
+ *   - keep the checkout fresh (git fetch on a timer, no token cost) and refresh
+ *     the projects that already injected skills when the head moves;
+ *   - gather facts from a project's files (lib/project.js);
+ *   - ask the model to pick, cached per head + facts + language (lib/select.js);
+ *   - inject and prune per project, with ownership recorded per skill
+ *     (lib/inject.js);
+ *   - mount the public Microsoft Learn MCP server for projects that ask for it.
  */
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -73,7 +75,6 @@ function dshHome() {
 /** Offered refresh intervals, in hours. */
 const INTERVAL_OPTIONS = [6, 12, 24, 72, 168];
 const SETTINGS_ROUTE = "/dsh-dotnet-skills/settings";
-const LEARN_INSTALL_ROUTE = "/dsh-dotnet-skills/learn/install";
 const LEARN_ROUTE = "/dsh-dotnet-skills/learn";
 const MAX_SKILLS_LIMIT = 50;
 const MIN_SKILLS_LIMIT = 1;
@@ -272,7 +273,7 @@ async function reconcileLearnMcp(ctx, warn) {
   const wanted = learnProjects.size > 0;
   if (wanted && mcpFiber === null) {
     mcpFiber = await mountLearnMcp(ctx, warn);
-    if (mcpFiber !== null) ensureLearnCli(warn, false);
+    if (mcpFiber !== null) ensureLearnCli(warn);
     return;
   }
   if (!wanted && mcpFiber !== null) {
@@ -313,11 +314,11 @@ function runNpm(args, options, done) {
  * Keep the `mslearn` CLI available whenever the MCP server is on: detect an
  * existing global install first, install it only when it is missing.
  */
-function ensureLearnCli(warn, force) {
+function ensureLearnCli(warn) {
   learn.cli.enabled = learn.mcp.active === true;
-  if (!learn.cli.enabled && force !== true) return;
+  if (!learn.cli.enabled) return;
   if (learn.cli.busy) return;
-  if (force !== true && learn.cli.installed === true) return;
+  if (learn.cli.installed === true) return;
   learn.cli.busy = true;
   const install = () => {
     runNpm(["install", "-g", LEARN_CLI_PACKAGE], { timeout: 240_000, windowsHide: true }, (error, stdout, stderr) => {
@@ -328,10 +329,6 @@ function ensureLearnCli(warn, force) {
       if (error !== null) warn(`could not install ${LEARN_CLI_PACKAGE}: ${error.message}`);
     });
   };
-  if (force === true) {
-    install();
-    return;
-  }
   runNpm(["ls", "-g", LEARN_CLI_PACKAGE, "--depth=0"], { timeout: 60_000, windowsHide: true }, (error) => {
     if (error === null) {
       learn.cli.busy = false;
@@ -875,19 +872,6 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
             } catch (error) {
               sendJson(response, 409, { ok: false, error: String(error?.message ?? error) });
             }
-          },
-        });
-        add({
-          kind: "exact",
-          path: LEARN_INSTALL_ROUTE,
-          handler: async (request, response) => {
-            if (!mutationAllowed(request) || (request.method ?? "GET") === "GET") {
-              sendJson(response, 403, { ok: false, error: "this change has to come from the DSH window" });
-              return;
-            }
-            await readJsonBody(request);
-            ensureLearnCli(warn, true);
-            sendJson(response, 200, { ok: true, settings: settingsView(cfg) });
           },
         });
         add({

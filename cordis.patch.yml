@@ -1,9 +1,10 @@
 # dsh-dotnet-skills — one Host row that keeps a GitHub .NET skill catalog cached
-# and injects a project-scoped subset from a composer button.
+# and injects a project-scoped subset chosen by the current model.
 #
 # Nothing is mirrored globally: the vendored checkout under checkoutDir is a
-# cache only, and skills reach a session when a human injects them for the
-# project in `.dsh/skills` (DSH's project skill root, rank 100).
+# cache only. A project receives two copies of each selected skill — the managed
+# repository in `.dsh/Skills/DotnetSkills` and the flat copy DSH discovers in
+# `.dsh/skills` — and both follow the catalog when this timer fetches a new head.
 - insert:
     - id: dotnet-skills
       name: dsh-dotnet-skills
