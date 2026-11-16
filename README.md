@@ -1,5 +1,7 @@
 # dsh-dotnet-skills
 
+English | [中文](./README.zh.md)
+
 Project-scoped .NET skills for DeepSeek Harness. A composer button reads the project, asks the current model which of 203 catalog skills actually fit, and copies only those into the project — plus an optional Microsoft Learn MCP server and its `mslearn` CLI.
 
 Nothing is mirrored into the user skill root: another project, or another user, never sees this project's selection.
