@@ -175,9 +175,10 @@ window.__ModuleLoader__.load({
       '.dsdk-desc{font-size:12px;color:var(--dsw-alias-label-secondary,#a3aab4);margin-top:3px;line-height:1.45;',
       'display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}',
       '.dsdk-foot{display:flex;align-items:center;gap:10px;padding:13px 20px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));',
-      'background:var(--dsw-alias-bg-layer-1,rgba(255,255,255,.02))}',
-      '.dsdk-grow{flex:1}',
-      '.dsdk-hint{font-size:11.5px;color:var(--dsw-alias-label-secondary,#8b929b)}',
+      'background:var(--dsw-alias-bg-layer-1,rgba(255,255,255,.02));flex-wrap:wrap;row-gap:8px}',
+      '.dsdk-grow{flex:1 1 auto;min-width:8px}',
+      '.dsdk-hint{font-size:11.5px;color:var(--dsw-alias-label-secondary,#8b929b);min-width:0;',
+      'overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dsdk-tokens{font-variant-numeric:tabular-nums}',
       '.dsdk-act{height:31px;padding:0 15px;border-radius:10px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.16));',
       'background:transparent;color:inherit;font:inherit;font-size:12.5px;cursor:pointer;transition:background-color .15s ease,filter .15s ease}',
@@ -317,9 +318,7 @@ window.__ModuleLoader__.load({
       const [query, setQuery] = React.useState('')
       const [selection, setSelection] = React.useState([])
       const [busy, setBusy] = React.useState(false)
-      const [refreshToken, setRefreshToken] = React.useState(0)
       const searchRef = React.useRef(null)
-      const forceRefresh = React.useRef(false)
 
       React.useEffect(() => store.subscribe(() => bump((value) => value + 1)), [])
 
@@ -331,36 +330,41 @@ window.__ModuleLoader__.load({
         setSelection(payload.injected.length > 0 ? payload.injected : payload.suggested)
       }, [])
 
-      React.useEffect(() => {
-        if (!open) return undefined
-        let cancelled = false
-        setPhase('loading')
-        setError('')
-        setQuery('')
-        if (sessionId === null || sessionId === undefined) {
-          setError('no live session id was passed to the panel')
-          setPhase('error')
-          return undefined
-        }
-        const refresh = forceRefresh.current === true
-        forceRefresh.current = false
-        request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}&lang=${uiLang()}${refresh ? '&refresh=1' : ''}`)
-          .then((payload) => {
-            if (cancelled) return
+      /** One load; `refresh` bypasses both the cache and the "already chosen" shortcut. */
+      const load = React.useCallback(
+        async (options) => {
+          const refresh = options !== undefined && options.refresh === true
+          setPhase('loading')
+          setError('')
+          if (sessionId === null || sessionId === undefined) {
+            setError('no live session id was passed to the panel')
+            setPhase('error')
+            return
+          }
+          try {
+            const payload = await request(
+              `${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}&lang=${uiLang()}${refresh ? '&refresh=1' : ''}`,
+            )
             if (payload === null || payload.ok !== true) throw new Error(payload?.error ?? 'no panel data')
             applyPanel(payload)
+            if (!refresh) setQuery('')
             setPhase('ready')
-            window.setTimeout(() => searchRef.current?.focus(), 40)
-          })
-          .catch((failure) => {
-            if (cancelled) return
+            window.setTimeout(() => {
+              if (searchRef.current) searchRef.current.focus()
+            }, 40)
+          } catch (failure) {
             setError(failure && failure.message ? failure.message : String(failure))
             setPhase('error')
-          })
-        return () => {
-          cancelled = true
-        }
-      }, [open, sessionId, refreshToken, applyPanel])
+          }
+        },
+        [sessionId, applyPanel],
+      )
+
+      React.useEffect(() => {
+        if (!open) return undefined
+        void load({ refresh: false })
+        return undefined
+      }, [open, sessionId, load])
 
       React.useEffect(() => {
         if (!open) return undefined
@@ -550,20 +554,7 @@ window.__ModuleLoader__.load({
                           `${strings.selected} ${selection.length} · ≈${chosenTokens} tok`,
                         ),
                         h('span', { className: 'dsdk-grow' }),
-                        h('span', { className: 'dsdk-hint' }, strings.confirmHint),
-                        h(
-                          'button',
-                          {
-                            type: 'button',
-                            className: 'dsdk-act',
-                            onClick: () => {
-                              forceRefresh.current = true
-                              setRefreshToken((value) => value + 1)
-                            },
-                            disabled: busy,
-                          },
-                          strings.refresh,
-                        ),
+                        h('button', { type: 'button', className: 'dsdk-act', onClick: () => void load({ refresh: true }), disabled: busy }, strings.refresh),
                         h(
                           'button',
                           {
