@@ -155,26 +155,23 @@ window.__ModuleLoader__.load({
       return () => tag.remove()
     }
 
-    /** The .NET mark: solid brand-purple badge with the white .NET wordmark. */
+    /**
+     * The .NET mark, drawn as geometry instead of text: a 4.7px wordmark turns to
+     * mush at this size, while a stroked "N" inside the brand badge stays crisp.
+     */
     function IconDotnet() {
       return h(
         'svg',
-        { viewBox: '0 0 16 16', width: 14, height: 14, 'aria-hidden': true, style: { display: 'block' } },
-        h('rect', { x: 0.6, y: 0.6, width: 14.8, height: 14.8, rx: 4.2, fill: '#512BD4' }),
-        h(
-          'text',
-          {
-            x: 8,
-            y: 10.15,
-            textAnchor: 'middle',
-            fontSize: 4.7,
-            fontWeight: 700,
-            letterSpacing: 0.05,
-            fill: '#ffffff',
-            fontFamily: 'inherit',
-          },
-          '.NET',
-        ),
+        { viewBox: '0 0 16 16', width: 15, height: 15, 'aria-hidden': true, style: { display: 'block' } },
+        h('rect', { x: 0.5, y: 0.5, width: 15, height: 15, rx: 4.4, fill: '#512BD4' }),
+        h('path', {
+          d: 'M5.1 11.4V4.6L10.9 11.4V4.6',
+          fill: 'none',
+          stroke: '#ffffff',
+          strokeWidth: 1.7,
+          strokeLinecap: 'round',
+          strokeLinejoin: 'round',
+        }),
       )
     }
 
