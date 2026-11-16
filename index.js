@@ -530,11 +530,11 @@ function registerTool(ctx, updater, cfg, warn) {
         const dispose = scoped.tools.register({
           name: "dotnet_skills",
           description:
-            "The .NET skill catalog for this project. action=find searches the cached 200+ skills (MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers); without `query` it detects the project's stack and lists the skills that fit. action=add adds the named skills to the project (never drops the user's picks) so their instructions become readable at the returned paths and they join the project catalog on the next step. action=remove removes only skills this tool added itself — anything the user injected from the composer panel is kept and reported. action=status reports the cached checkout, action=sync refreshes it. Prefer find before answering .NET/C# work from memory.",
+            "The .NET skill catalog for this project. action=find searches the cached 200+ skills (MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers); without `query` it detects the project's stack and lists the skills that fit. action=add adds the named skills to the project (never drops the user's picks) so their instructions become readable at the returned paths and they join the project catalog on the next step. action=remove removes only skills this tool added itself — anything the user injected from the composer panel is kept and reported. action=sync refreshes the cached checkout. Prefer find before answering .NET/C# work from memory.",
           parameters: {
             type: "object",
             properties: {
-              action: { type: "string", enum: ["find", "add", "remove", "status", "sync"] },
+              action: { type: "string", enum: ["find", "add", "remove", "sync"] },
               query: {
                 type: "string",
                 description:
@@ -565,7 +565,6 @@ function registerTool(ctx, updater, cfg, warn) {
             const action = String(args?.action ?? "find");
             const sessionId = exec?.agent?.session?.id ?? null;
             try {
-              if (action === "status") return { report: formatStatus(updater.status()) };
               if (action === "sync") {
                 const result = await updater.sync("manual");
                 return { report: `${result.ok ? "synced" : `sync failed: ${result.error}`}\n${formatStatus(updater.status())}` };
