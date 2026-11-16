@@ -26,38 +26,9 @@
         startDelaySeconds: 20
         # Optional curation. Entries match a collection (top level under
         # catalog/), a package directory, or a skill name, case-insensitively.
-        # Unmirrored skills stay in the checkout, so a preset is just this list:
         #   include: [Frameworks, Testing]     # keep only these
         #   exclude: [Mobile, XR]             # skip these
-        #
-        # Preset B ("desktop + build diagnostics + tests", 59 skills ≈ 7.7k
-        # catalog tokens instead of 25.5k for all 203):
-        include:
-          - DotNet
-          - Official-DotNet
-          - Official-DotNet-Advanced
-          - Code-Review
-          - Architecture
-          - Project-Setup
-          - Modern-CSharp
-          - Official-DotNet-MSBuild
-          - Official-DotNet-Diagnostics
-          - Official-DotNet-NuGet
-          - NuGetPackageManager
-          - Analyzer-Config
-          - Format
-          - Complexity
-          - WinForms
-          - Official-DotNet-WinForms
-          - WPF
-          - Official-DotNet-Data
-          - Entity-Framework-Core
-          - Entity-Framework-6
-          - Microsoft-Extensions
-          - MVVM-Toolkit
-          - MSTest
-          - xUnit
-          - NUnit
+        include: []
         exclude: []
         # Git executable; override when `git` is not on the PATH of the DSH process.
         gitCommand: git
