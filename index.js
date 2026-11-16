@@ -197,6 +197,19 @@ async function saveConfig(ctx, patch) {
   await editor.edit(entry, (current) => ({ ...(current ?? {}), ...patch }));
 }
 
+/** Run the npm `args`; Windows needs cmd.exe because execFile cannot spawn a .cmd file. */
+function runNpm(args, options, done) {
+  try {
+    if (process.platform === "win32") {
+      execFile(process.env.ComSpec ?? "cmd.exe", ["/d", "/s", "/c", "npm", ...args], options, done);
+    } else {
+      execFile("npm", args, options, done);
+    }
+  } catch (error) {
+    done(error, "", "");
+  }
+}
+
 /**
  * Keep the `mslearn` CLI available whenever the MCP server is on: detect an
  * existing global install first, install it only when it is missing.
@@ -206,14 +219,13 @@ function ensureLearnCli(cfg, warn, force) {
   if (!learn.cli.enabled && force !== true) return;
   if (learn.cli.busy) return;
   if (force !== true && learn.cli.installed === true) return;
-  const npm = process.platform === "win32" ? "npm.cmd" : "npm";
   learn.cli.busy = true;
   const install = () => {
-    execFile(npm, ["install", "-g", LEARN_CLI_PACKAGE], { timeout: 240_000, windowsHide: true }, (error, stdout, stderr) => {
+    runNpm(["install", "-g", LEARN_CLI_PACKAGE], { timeout: 240_000, windowsHide: true }, (error, stdout, stderr) => {
       learn.cli.busy = false;
       learn.cli.installed = error === null;
       const output = `${stdout ?? ""}${stderr ?? ""}`.trim().split(/\r?\n/u).filter((line) => line !== "");
-      learn.cli.log = output.slice(-6);
+      learn.cli.log = error === null ? output.slice(-2) : [...output.slice(-5), String(error.message ?? error)].slice(-6);
       if (error !== null) warn(`could not install ${LEARN_CLI_PACKAGE}: ${error.message}`);
     });
   };
@@ -221,7 +233,7 @@ function ensureLearnCli(cfg, warn, force) {
     install();
     return;
   }
-  execFile(npm, ["ls", "-g", LEARN_CLI_PACKAGE, "--depth=0"], { timeout: 60_000, windowsHide: true }, (error) => {
+  runNpm(["ls", "-g", LEARN_CLI_PACKAGE, "--depth=0"], { timeout: 60_000, windowsHide: true }, (error) => {
     if (error === null) {
       learn.cli.busy = false;
       learn.cli.installed = true;
