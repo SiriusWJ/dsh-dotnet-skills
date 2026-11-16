@@ -20,7 +20,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { buildIndex } from "./lib/catalog.js";
 import { applyProject, clearProject, injectProject, readInjection, skillsDir } from "./lib/inject.js";
-import { describeProject, looksLikeDotnet } from "./lib/project.js";
+import { analysisScope, describeProject, looksLikeDotnet } from "./lib/project.js";
 import { cacheKey, selectSkills } from "./lib/select.js";
 import { formatMatches, searchSkills } from "./lib/search.js";
 
@@ -283,7 +283,8 @@ async function buildPanel(ctx, updater, cfg, sessionId, options = {}) {
     return { ok: false, error: String(error?.message ?? error), project: { root: project.root } };
   }
 
-  const description = describeProject(project.root);
+  const scope = analysisScope(project.root);
+  const description = describeProject(scope);
   const head = updater.state.lastResult?.head ?? null;
   const key = cacheKey(head, description);
   let suggested = [];
@@ -326,6 +327,8 @@ async function buildPanel(ctx, updater, cfg, sessionId, options = {}) {
     project: {
       root: project.root,
       name: description.name,
+      scope,
+      scoped: scope !== project.root,
       skillsDir: skillsDir(project.root),
       projectScoped: project.root !== project.cwd,
     },
@@ -504,11 +507,13 @@ function registerRoutes(ctx, updater, cfg, warn) {
 function formatFacts(ctx, sessionId) {
   const project = resolveProject(ctx, sessionId);
   if (project.error !== undefined) return `dotnet_skills: ${project.error}`;
-  const description = describeProject(project.root);
+  const scope = analysisScope(project.root);
+  const description = describeProject(scope);
   const injected = Object.keys(readInjection(project.root).skills);
   const facts = description.facts;
   return [
     `project    : ${description.name}  (${project.root})`,
+    ...(scope !== project.root ? [`analysed   : ${scope}`] : []),
     `injected   : ${injected.length}${injected.length > 0 ? ` — ${injected.join(", ")}` : ""}`,
     `frameworks : ${facts.frameworks.join(", ") || "unknown"}`,
     `projects   : ${facts.projects}${facts.projectNames.length > 0 ? ` (${facts.projectNames.join(", ")})` : ""}`,
@@ -572,11 +577,11 @@ function registerTool(ctx, updater, cfg, warn) {
         const dispose = scoped.tools.register({
           name: "dotnet_skills",
           description:
-            "The .NET skill catalog for this project. action=find with `query` searches the cached 200+ skills (MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers); without `query` it reports the project's facts (frameworks, packages, current injection). action=add adds the named skills to the project (never drops the user's picks) so their instructions become readable at the returned paths and they join the project catalog on the next step. action=remove removes only skills this tool added itself — anything the user injected from the composer panel is kept and reported. The catalog refreshes itself in the background; prefer find before answering .NET/C# work from memory.",
+            "The .NET skill catalog for this project. action=find with `query` searches the cached 200+ skills (MSBuild and builds, EF Core, WinForms/WPF/Blazor/MAUI, testing frameworks, profiling and dumps, migrations, architecture, analyzers); without `query` it reports the project's facts (frameworks, packages, current injection). action=add adds the named skills to the project (never drops the user's picks) so their instructions become readable at the returned paths and they join the project catalog on the next step. action=remove removes only skills this tool added itself — anything the user injected from the composer panel is kept and reported. action=probe runs the panel's model selection once and prints the raw result, for diagnosing what the panel would suggest. The catalog refreshes itself in the background; prefer find before answering .NET/C# work from memory.",
           parameters: {
             type: "object",
             properties: {
-              action: { type: "string", enum: ["find", "add", "remove"] },
+              action: { type: "string", enum: ["find", "add", "remove", "probe"] },
               query: {
                 type: "string",
                 description:
@@ -607,6 +612,23 @@ function registerTool(ctx, updater, cfg, warn) {
             const action = String(args?.action ?? "find");
             const sessionId = exec?.agent?.session?.id ?? null;
             try {
+              if (action === "probe") {
+                const panel = await buildPanel(ctx, updater, cfg, sessionId, { refresh: true });
+                return {
+                  report: JSON.stringify(
+                    {
+                      ok: panel.ok,
+                      error: panel.error,
+                      analysis: panel.analysis,
+                      suggested: panel.suggested,
+                      reasons: panel.reasons,
+                      totals: panel.totals,
+                    },
+                    null,
+                    2,
+                  ),
+                };
+              }
               if (action === "add" || action === "remove") return { report: mutateSelection(ctx, updater, args, sessionId, action) };
               if (action === "find") {
                 const query = String(args?.query ?? "").trim();

@@ -468,6 +468,9 @@ window.__ModuleLoader__.load({
                     h('button', { type: 'button', className: 'dsdk-close', onClick: close, title: strings.cancel, 'aria-label': strings.cancel }, h(IconClose)),
                   ),
                   panel && panel.project ? h('div', { className: 'dsdk-sub' }, `${panel.project.name} — ${panel.project.root}`) : null,
+                  panel && panel.project && panel.project.scoped
+                    ? h('div', { className: 'dsdk-sub' }, `分析范围：${panel.project.scope}`)
+                    : null,
                 ),
                 panel && phase === 'ready'
                   ? h(
