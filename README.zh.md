@@ -22,9 +22,11 @@ composer 按钮（dotnet技能）
 
 ## 界面截图
 
-| 浮窗面板 | composer 按钮 |
+| 深色主题 | 浅色主题 |
 |---|---|
-| ![面板：模型挑选的技能与理由、Learn 开关、当前生效的设置](assets/screenshots/panel.png) | ![带注入数量的 composer 按钮](assets/screenshots/button.png) |
+| ![浮窗：模型挑选的技能与理由、Learn 开关、当前生效的设置](assets/screenshots/panel.png) | ![同一浮窗在浅色主题下的样子（DSH Web 界面）](assets/screenshots/panel-light.png) |
+
+![带注入数量的 composer 按钮](assets/screenshots/button.png)
 ## 技能目录：官方 .NET 技能的超集
 
 目录来自 [`managedcode/dotnet-skills`](https://github.com/managedcode/dotnet-skills)：203 个技能，分五个集合（Tools、Frameworks、Testing、Platform、Libraries）。
