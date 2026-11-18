@@ -20,6 +20,23 @@ composer button (dotnet技能)
 
 The pick is cached per `(catalog head, project facts, UI language)` for 30 minutes; `重新分析` bypasses the cache and waits for a fresh call. Opening the panel when skills are already injected does **not** call the model — it just shows the current selection.
 
+## Catalog: a superset of the official .NET skills
+
+The catalog comes from [`managedcode/dotnet-skills`](https://github.com/managedcode/dotnet-skills) — 203 skills in five collections (Tools, Frameworks, Testing, Platform, Libraries).
+
+It is a **superset of the official Microsoft .NET skills curated in [`dotnet/skills`](https://github.com/dotnet/skills)**: all **108** skills that repository publishes are present here under the same names, plus **95** community skills (verified against `dotnet/skills@main` when this file was written). Nothing in the official collection is dropped or renamed, so you can swap one source for the other without losing coverage.
+
+Only the skills a project actually needs are copied into it; the catalog itself stays a checkout under `$DSH_HOME/vendor/dotnet-skills`, refreshed on the configured interval. Point `repoUrl` at another catalog (including `dotnet/skills` itself) if you would rather track a different source.
+
+## Requirements
+
+| Item | Value |
+|---|---|
+| DeepSeek Harness | `>=0.2.2-rc.1 <0.3.0`, declared as `engines.dsh` — a host outside that range refuses the install instead of half-working |
+| Node.js | whatever the running DSH uses (22+) |
+| `git` on the DSH process's PATH | needed for the catalog checkout; override with `gitCommand` |
+| Network | `github.com` for the catalog, `learn.microsoft.com` only when the Learn MCP server is on |
+
 ## Layout
 
 ```text

@@ -20,6 +20,22 @@ composer 按钮（dotnet技能）
 
 挑选结果按 `(目录 head, 项目事实, 界面语言)` 缓存 30 分钟；点「重新分析」会绕过缓存并显示等待状态。如果项目里已经有注入，打开面板**不会**调用模型，只展示当前选择。
 
+## 技能目录：官方 .NET 技能的超集
+
+目录来自 [`managedcode/dotnet-skills`](https://github.com/managedcode/dotnet-skills)：203 个技能，分五个集合（Tools、Frameworks、Testing、Platform、Libraries）。
+
+它是**微软官方 .NET 技能库 [`dotnet/skills`](https://github.com/dotnet/skills) 的超集**：官方发布的 **108** 个技能在此以同名全部存在，另外还有 **95** 个社区技能（撰写本文时对照 `dotnet/skills@main` 核对）。官方集合中的技能没有任何删减或改名，两个源可以互换而不损失覆盖范围。
+
+只有项目真正需要的技能会被复制进项目；目录本身保留在 `$DSH_HOME/vendor/dotnet-skills` 下，按配置的间隔刷新。若想跟踪别的来源（包括直接使用 `dotnet/skills`），改 `repoUrl` 即可。
+
+## 环境要求
+
+| 项 | 要求 |
+|---|---|
+| DeepSeek Harness | `>=0.2.2-rc.1 <0.3.0`，通过 `engines.dsh` 声明——不在该范围的宿主会直接拒绝安装，而不是装上半残 |
+| Node.js | 跟随运行中的 DSH（22+） |
+| DSH 进程 PATH 中有 `git` | 用于拉取目录；可用 `gitCommand` 覆盖 |
+| 网络 | 目录需要 `github.com`；仅在开启 Learn MCP 时才访问 `learn.microsoft.com` |
 ## 目录布局
 
 ```text

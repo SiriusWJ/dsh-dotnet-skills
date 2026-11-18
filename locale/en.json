@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "dotnet skills",
-    "description": "Project-scoped .NET skills: the current model picks from 203 catalog skills using facts read from the project, and the selection is copied into <project>/.dsh/Skills/DotnetSkills and .dsh/skills, refreshed whenever the background catalog sync moves. A panel switch enables the Microsoft Learn MCP per working directory and installs the mslearn CLI when missing."
+    "description": "Project-scoped .NET skills: the catalog is a superset of the official dotnet/skills collection (203 skills, all 108 official ones included), the current model picks from it using facts read from the project, the selection is copied into <project>/.dsh/Skills/DotnetSkills and .dsh/skills and refreshed when the catalog updates, and the Microsoft Learn MCP server can be switched on per working directory. Requires DSH >=0.2.2-rc.1 <0.3.0."
   }
 }

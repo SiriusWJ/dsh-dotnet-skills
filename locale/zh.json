@@ -1,6 +1,6 @@
 {
   "meta": {
     "title": "dotnet 技能库",
-    "description": "按项目注入 .NET 技能：读取项目事实后由当前模型从 203 个技能中挑选，复制到 <项目>/.dsh/Skills/DotnetSkills 与 .dsh/skills，并在后台目录更新时同步两份副本；面板右上角可按工作目录开启 Microsoft Learn MCP（自动安装 mslearn CLI）。"
+    "description": "按项目注入 .NET 技能：目录是微软官方 dotnet/skills 的超集（203 个技能，含官方全部 108 个），由当前模型依据项目事实挑选后复制到 <项目>/.dsh/Skills/DotnetSkills 与 .dsh/skills，并随目录更新自动同步；可按工作目录开启 Microsoft Learn MCP。要求 DSH >=0.2.2-rc.1 <0.3.0。"
   }
 }
