@@ -20,6 +20,11 @@ composer 按钮（dotnet技能）
 
 挑选结果按 `(目录 head, 项目事实, 界面语言)` 缓存 30 分钟；点「重新分析」会绕过缓存并显示等待状态。如果项目里已经有注入，打开面板**不会**调用模型，只展示当前选择。
 
+## 界面截图
+
+| 浮窗面板 | composer 按钮 |
+|---|---|
+| ![面板：模型挑选的技能与理由、Learn 开关、当前生效的设置](assets/screenshots/panel.png) | ![带注入数量的 composer 按钮](assets/screenshots/button.png) |
 ## 技能目录：官方 .NET 技能的超集
 
 目录来自 [`managedcode/dotnet-skills`](https://github.com/managedcode/dotnet-skills)：203 个技能，分五个集合（Tools、Frameworks、Testing、Platform、Libraries）。

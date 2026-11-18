@@ -20,6 +20,11 @@ composer button (dotnet技能)
 
 The pick is cached per `(catalog head, project facts, UI language)` for 30 minutes; `重新分析` bypasses the cache and waits for a fresh call. Opening the panel when skills are already injected does **not** call the model — it just shows the current selection.
 
+## Screenshots
+
+| The composer panel | The button |
+|---|---|
+| ![Panel: the model's picks with reasons, the Learn switch, and the settings in force](assets/screenshots/panel.png) | ![Composer button with the injected count](assets/screenshots/button.png) |
 ## Catalog: a superset of the official .NET skills
 
 The catalog comes from [`managedcode/dotnet-skills`](https://github.com/managedcode/dotnet-skills) — 203 skills in five collections (Tools, Frameworks, Testing, Platform, Libraries).
