@@ -95,7 +95,7 @@ The panel's top-right pill toggles the public Microsoft Learn MCP server (`https
 | `/dsh-dotnet-skills/settings` | GET/POST | read or save the two knobs |
 | `/dsh-dotnet-skills/learn` | POST | `{sessionId, enabled}` → per-project Microsoft Learn switch |
 
-Mutations require a JSON content type and same-origin; the desktop app sends both.
+Every route refuses a caller a browser labels cross-site (Sec-Fetch-Site: cross-site / same-site, or a mismatched Origin); mutations additionally require a JSON content type. The DSH window and local tools send neither header and are served normally.
 
 ## Ownership
 

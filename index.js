@@ -712,6 +712,30 @@ function mutationAllowed(request) {
   return true;
 }
 
+/**
+ * Refuse a request a browser sent from another site, for reads as well as writes.
+ *
+ * The routes are served by the web carrier directly, so DSH's own peer checks do
+ * not apply: without this, any page open in the same browser could read the
+ * project facts (paths, packages) or toggle the Learn server. Browsers label the
+ * caller in `Sec-Fetch-Site`; a caller that sends neither that header nor an
+ * Origin (curl, a tool, the desktop shell) is let through.
+ */
+function crossSiteRefused(request) {
+  const site = String(request.headers["sec-fetch-site"] ?? "").toLowerCase();
+  if (site === "cross-site" || site === "same-site") return true;
+  const origin = request.headers.origin;
+  const host = request.headers.host;
+  if (typeof origin === "string" && typeof host === "string") {
+    try {
+      if (new URL(origin).host !== host) return true;
+    } catch {
+      return true;
+    }
+  }
+  return false;
+}
+
 /* ------------------------------------------------------------------ *
  * checkout refresh timer (restartable, so a settings change applies at once)
  * ------------------------------------------------------------------ */
@@ -760,6 +784,10 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
           kind: "exact",
           path: STATE_ROUTE,
           handler: async (request, response) => {
+            if (crossSiteRefused(request)) {
+              sendJson(response, 403, { ok: false, error: "this route answers only the DSH window" });
+              return;
+            }
             const url = new URL(request.url ?? STATE_ROUTE, "http://localhost");
             const startedAt = Date.now();
             const refresh = url.searchParams.get("refresh") === "1";
@@ -796,7 +824,7 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
           kind: "exact",
           path: APPLY_ROUTE,
           handler: async (request, response) => {
-            if (!mutationAllowed(request)) {
+            if (crossSiteRefused(request) || !mutationAllowed(request)) {
               sendJson(response, 403, { ok: false, error: "this change has to come from the DSH window" });
               return;
             }
@@ -825,7 +853,7 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
           kind: "exact",
           path: CLEAR_ROUTE,
           handler: async (request, response) => {
-            if (!mutationAllowed(request)) {
+            if (crossSiteRefused(request) || !mutationAllowed(request)) {
               sendJson(response, 403, { ok: false, error: "this change has to come from the DSH window" });
               return;
             }
@@ -847,11 +875,15 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
           kind: "exact",
           path: SETTINGS_ROUTE,
           handler: async (request, response) => {
+            if (crossSiteRefused(request)) {
+              sendJson(response, 403, { ok: false, error: "this route answers only the DSH window" });
+              return;
+            }
             if ((request.method ?? "GET") === "GET") {
               sendJson(response, 200, { ok: true, settings: settingsView(cfg) });
               return;
             }
-            if (!mutationAllowed(request)) {
+            if (crossSiteRefused(request) || !mutationAllowed(request)) {
               sendJson(response, 403, { ok: false, error: "this change has to come from the DSH window" });
               return;
             }

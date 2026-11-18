@@ -94,7 +94,7 @@ Windows 上 `.dsh/Skills` 与 `.dsh/skills` 是同一个目录，所以受管仓
 | `/dsh-dotnet-skills/settings` | GET/POST | 读取或保存两个开关 |
 | `/dsh-dotnet-skills/learn` | POST | `{sessionId, enabled}` → 按项目的 Microsoft Learn 开关 |
 
-写操作要求 JSON content-type 且同源（桌面端两者都会带）。
+所有路由都会拒绝浏览器标记为跨站的调用（Sec-Fetch-Site: cross-site / same-site，或 Origin 与 Host 不匹配）；写操作另外要求 JSON content-type。DSH 窗口与本地工具不带这些头，正常放行。
 
 ## 归属
 
