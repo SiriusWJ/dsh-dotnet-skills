@@ -426,39 +426,53 @@ window.__ModuleLoader__.load({
 
       React.useEffect(() => store.subscribe(() => bump((value) => value + 1)), [])
 
-      React.useEffect(() => {
-        let cancelled = false
-        if (sessionId === null) return undefined
-        const refresh = () => {
+      const sequence = React.useRef(0)
+
+      // One cheap read of the project's manifest. A session that has just become
+      // active may not be registered on the host yet — the first switch would then
+      // answer "no live session" and leave the badge one change behind — so a
+      // failed read retries a few times before the next poll.
+      const refreshCount = React.useCallback(
+        (attempt = 0) => {
+          if (sessionId === null || sessionId === undefined) return
+          const mine = (sequence.current += 1)
+          const retry = () => {
+            if (mine !== sequence.current || attempt >= 4) return
+            window.setTimeout(() => refreshCount(attempt + 1), 400 * (attempt + 1))
+          }
           request(`${COUNT_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}`)
             .then((payload) => {
-              if (cancelled || payload === null || payload.ok !== true) return
-              setCount(payload.injected)
+              if (mine !== sequence.current) return
+              if (payload !== null && payload.ok === true) {
+                setCount(payload.injected)
+                return
+              }
+              retry()
             })
-            .catch(() => {
-              /* the dialog reports the real error when opened */
-            })
-        }
-        refresh()
-        // Another session working in the same project can change the selection, so
-        // follow it cheaply: poll while the page is visible, plus on focus and on
-        // returning to the tab. This route never runs the model.
+            .catch(retry)
+        },
+        [sessionId],
+      )
+
+      React.useEffect(() => {
+        refreshCount()
+        // Another session in the same project can change the selection, so follow it
+        // cheaply: poll while the page is visible, plus on focus and tab return.
         const timer = window.setInterval(() => {
-          if (!document.hidden) refresh()
+          if (!document.hidden) refreshCount()
         }, 10000)
-        const onFocus = () => refresh()
+        const onFocus = () => refreshCount()
         const onVisible = () => {
-          if (!document.hidden) refresh()
+          if (!document.hidden) refreshCount()
         }
         window.addEventListener('focus', onFocus)
         document.addEventListener('visibilitychange', onVisible)
         return () => {
-          cancelled = true
           window.clearInterval(timer)
           window.removeEventListener('focus', onFocus)
           document.removeEventListener('visibilitychange', onVisible)
         }
-      }, [sessionId, revision])
+      }, [refreshCount, revision])
 
       return h(
         'div',
