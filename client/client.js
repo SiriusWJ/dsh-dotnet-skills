@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({
     const APPLY_ENDPOINT = '/dsh-dotnet-skills/apply'
     const CLEAR_ENDPOINT = '/dsh-dotnet-skills/clear'
     const SETTINGS_ENDPOINT = '/dsh-dotnet-skills/settings'
+    const COUNT_ENDPOINT = '/dsh-dotnet-skills/count'
     const LEARN_ENDPOINT = '/dsh-dotnet-skills/learn'
     const BRAND = '#512bd4'
 
@@ -428,18 +429,36 @@ window.__ModuleLoader__.load({
       React.useEffect(() => {
         let cancelled = false
         if (sessionId === null) return undefined
-        request(`${STATE_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}&lang=${uiLang()}`)
-          .then((payload) => {
-            if (cancelled || payload === null || payload.ok !== true) return
-            setCount(payload.injected.length)
-          })
-          .catch(() => {
-            /* the dialog reports the real error when opened */
-          })
+        const refresh = () => {
+          request(`${COUNT_ENDPOINT}?sessionId=${encodeURIComponent(sessionId)}`)
+            .then((payload) => {
+              if (cancelled || payload === null || payload.ok !== true) return
+              setCount(payload.injected)
+            })
+            .catch(() => {
+              /* the dialog reports the real error when opened */
+            })
+        }
+        refresh()
+        // Another session working in the same project can change the selection, so
+        // follow it cheaply: poll while the page is visible, plus on focus and on
+        // returning to the tab. This route never runs the model.
+        const timer = window.setInterval(() => {
+          if (!document.hidden) refresh()
+        }, 10000)
+        const onFocus = () => refresh()
+        const onVisible = () => {
+          if (!document.hidden) refresh()
+        }
+        window.addEventListener('focus', onFocus)
+        document.addEventListener('visibilitychange', onVisible)
         return () => {
           cancelled = true
+          window.clearInterval(timer)
+          window.removeEventListener('focus', onFocus)
+          document.removeEventListener('visibilitychange', onVisible)
         }
-      }, [sessionId, revision, store.open])
+      }, [sessionId, revision])
 
       return h(
         'div',

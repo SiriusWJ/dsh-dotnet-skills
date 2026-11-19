@@ -75,6 +75,7 @@ function dshHome() {
 /** Offered refresh intervals, in hours. */
 const INTERVAL_OPTIONS = [6, 12, 24, 72, 168];
 const SETTINGS_ROUTE = "/dsh-dotnet-skills/settings";
+const COUNT_ROUTE = "/dsh-dotnet-skills/count";
 const LEARN_ROUTE = "/dsh-dotnet-skills/learn";
 const MAX_SKILLS_LIMIT = 50;
 const MIN_SKILLS_LIMIT = 1;
@@ -869,6 +870,26 @@ function registerRoutes(ctx, updater, cfg, warn, scheduler) {
             } catch (error) {
               sendJson(response, 500, { ok: false, error: String(error?.message ?? error) });
             }
+          },
+        });
+        add({
+          kind: "exact",
+          path: COUNT_ROUTE,
+          handler: async (request, response) => {
+            if (crossSiteRefused(request)) {
+              sendJson(response, 403, { ok: false, error: "this route answers only the DSH window" });
+              return;
+            }
+            const url = new URL(request.url ?? COUNT_ROUTE, "http://localhost");
+            const project = resolveProject(ctx, url.searchParams.get("sessionId"));
+            if (project.error !== undefined) {
+              sendJson(response, 200, { ok: false, error: project.error });
+              return;
+            }
+            // Cheap on purpose: no fact scan and no model call, just the manifest,
+            // so the composer badge can follow another session's change cheaply.
+            const names = Object.keys(readInjection(project.root).skills);
+            sendJson(response, 200, { ok: true, root: project.root, injected: names.length, names });
           },
         });
         add({

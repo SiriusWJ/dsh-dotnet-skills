@@ -98,6 +98,7 @@ Windows 上 `.dsh/Skills` 与 `.dsh/skills` 是同一个目录，所以受管仓
 | `/dsh-dotnet-skills/state?sessionId=&lang=&refresh=1` | GET | 项目事实、模型挑选与理由、目录、当前注入（`refresh=1` 重跑模型） |
 | `/dsh-dotnet-skills/apply` | POST | `{sessionId, skills[], lang}` → 替换选择（面板代表人类） |
 | `/dsh-dotnet-skills/clear` | POST | `{sessionId, lang}` → 移除本插件拥有的一切 |
+| `/dsh-dotnet-skills/count?sessionId=` | GET | 只返回注入数量——读一次清单，不扫描项目、不调用模型；composer 徽标轮询它 |
 | `/dsh-dotnet-skills/settings` | GET/POST | 读取或保存两个开关 |
 | `/dsh-dotnet-skills/learn` | POST | `{sessionId, enabled}` → 按项目的 Microsoft Learn 开关 |
 

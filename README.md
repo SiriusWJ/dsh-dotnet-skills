@@ -99,6 +99,7 @@ The panel's top-right pill toggles the public Microsoft Learn MCP server (`https
 | `/dsh-dotnet-skills/state?sessionId=&lang=&refresh=1` | GET | facts, model picks with reasons, catalog, current injection (`refresh=1` re-runs the model) |
 | `/dsh-dotnet-skills/apply` | POST | `{sessionId, skills[], lang}` → replace the selection (the panel acts as the human) |
 | `/dsh-dotnet-skills/clear` | POST | `{sessionId, lang}` → remove everything this plugin owns |
+| `/dsh-dotnet-skills/count?sessionId=` | GET | the injected count only — one manifest read, no fact scan, no model call; the composer badge polls it |
 | `/dsh-dotnet-skills/settings` | GET/POST | read or save the two knobs |
 | `/dsh-dotnet-skills/learn` | POST | `{sessionId, enabled}` → per-project Microsoft Learn switch |
 
